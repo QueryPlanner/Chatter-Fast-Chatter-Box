@@ -1,0 +1,23 @@
+services:
+  fast-chatterbox:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./voices:/app/voices
+      - ./outputs:/app/outputs
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEVICE=auto
+      - DEFAULT_VOICE=dan
+      - DEFAULT_OUTPUT_FORMAT=mp3
+    restart: unless-stopped
+    # For GPU support, uncomment the following:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]

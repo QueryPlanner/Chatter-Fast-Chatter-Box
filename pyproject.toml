@@ -1,0 +1,28 @@
+[project]
+name = "fast-chatterbox"
+version = "0.1.0"
+description = "FastAPI server for Chatterbox TTS with voice cloning support"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "chatterbox-tts",
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.0.0",
+    "python-multipart>=0.0.6",
+    "pydub>=0.25.1",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.26.0",
+]
+
+[project.scripts]
+serve = "app.main:main"
+
+[tool.uv]
+dev-dependencies = ["httpx>=0.26.0"]

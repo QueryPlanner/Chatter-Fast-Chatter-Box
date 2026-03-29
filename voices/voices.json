@@ -1,0 +1,54 @@
+{
+  "voices": {
+    "dan_prompt_1": {
+      "name": "dan_prompt_1",
+      "filename": "dan_prompt_1.wav",
+      "path": "voices/dan_prompt_1.wav",
+      "file_size": 3840078,
+      "created": "2025-03-29T12:00:00"
+    },
+    "donald_prompt": {
+      "name": "donald_prompt",
+      "filename": "donald_prompt.wav",
+      "path": "voices/donald_prompt.wav",
+      "file_size": 3542146,
+      "created": "2025-03-29T12:00:00"
+    },
+    "donald_prompt_2": {
+      "name": "donald_prompt_2",
+      "filename": "donald_prompt_2.wav",
+      "path": "voices/donald_prompt_2.wav",
+      "file_size": 3840078,
+      "created": "2025-03-29T12:00:00"
+    },
+    "donald_prompt_3": {
+      "name": "donald_prompt_3",
+      "filename": "donald_prompt_3.wav",
+      "path": "voices/donald_prompt_3.wav",
+      "file_size": 3840078,
+      "created": "2025-03-29T12:00:00"
+    },
+    "huberman_prompt": {
+      "name": "huberman_prompt",
+      "filename": "huberman_prompt.wav",
+      "path": "voices/huberman_prompt.wav",
+      "file_size": 4800078,
+      "created": "2025-03-29T12:00:00"
+    },
+    "snoop_dogg_prompt": {
+      "name": "snoop_dogg_prompt",
+      "filename": "snoop_dogg_prompt.wav",
+      "path": "voices/snoop_dogg_prompt.wav",
+      "file_size": 15691524,
+      "created": "2025-03-29T12:00:00"
+    }
+  },
+  "aliases": {
+    "dan": "dan_prompt_1",
+    "donald": "donald_prompt",
+    "huberman": "huberman_prompt",
+    "snoop": "snoop_dogg_prompt"
+  },
+  "default_voice": "dan_prompt_1",
+  "version": "1.0"
+}

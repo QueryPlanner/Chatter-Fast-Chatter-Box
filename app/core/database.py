@@ -9,11 +9,16 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.config import Config
+
+
+def utc_now_iso() -> str:
+    """Return timezone-aware UTC timestamp in ISO format."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def get_db_path() -> Path:
@@ -111,7 +116,7 @@ class BookRepository:
             The new book ID
         """
         book_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = utc_now_iso()
 
         with self._get_conn() as conn:
             # Insert book
@@ -203,7 +208,7 @@ class BookRepository:
 
     def mark_chapter_processing(self, chapter_id: int, book_id: str) -> None:
         """Mark a chapter as processing, and update book status if needed."""
-        now = datetime.utcnow().isoformat()
+        now = utc_now_iso()
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE chapters SET status = 'processing', started_at = ? WHERE id = ?",
@@ -219,7 +224,7 @@ class BookRepository:
         self, chapter_id: int, audio_path: str, duration_secs: float
     ) -> None:
         """Mark a chapter as completed with its audio path."""
-        now = datetime.utcnow().isoformat()
+        now = utc_now_iso()
         with self._get_conn() as conn:
             conn.execute(
                 """
@@ -233,7 +238,7 @@ class BookRepository:
 
     def mark_chapter_failed(self, chapter_id: int, error: str, retry: bool = False) -> None:
         """Mark a chapter as failed, optionally incrementing retry count and resetting to pending."""
-        now = datetime.utcnow().isoformat()
+        now = utc_now_iso()
         with self._get_conn() as conn:
             if retry:
                 conn.execute(
@@ -268,20 +273,20 @@ class BookRepository:
             processing = counts.get("processing", 0)
             failed = counts.get("failed", 0)
 
-            now = datetime.utcnow().isoformat()
+            now = utc_now_iso()
 
             if pending == 0 and processing == 0:
                 # Book is finished
                 new_status = "failed" if failed > 0 else "completed"
                 conn.execute(
-                    "UPDATE books SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE books SET status = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'processing')",
                     (new_status, now, now, book_id),
                 )
                 conn.commit()
 
     def mark_book_cancelled(self, book_id: str) -> None:
         """Cancel a book and its pending/processing chapters."""
-        now = datetime.utcnow().isoformat()
+        now = utc_now_iso()
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE books SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('queued', 'processing')",
@@ -295,7 +300,7 @@ class BookRepository:
 
     def retry_failed_chapters(self, book_id: str) -> None:
         """Set failed chapters back to pending and reset book status."""
-        now = datetime.utcnow().isoformat()
+        now = utc_now_iso()
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE chapters SET status = 'pending', error = NULL WHERE book_id = ? AND status = 'failed'",

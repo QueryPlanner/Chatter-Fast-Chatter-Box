@@ -19,6 +19,10 @@ WORKER_POLL_INTERVAL = int(getattr(Config, "WORKER_POLL_INTERVAL", 2))
 MAX_CHAPTER_RETRIES = int(getattr(Config, "MAX_CHAPTER_RETRIES", 3))
 
 
+class PermanentChapterError(ValueError):
+    """Permanent chapter failure that should not be retried."""
+
+
 def get_book_output_dir(book_id: str) -> Path:
     """Get the directory where audiobook chapters are saved."""
     output_dir = Path("outputs") / "books" / book_id
@@ -58,7 +62,7 @@ async def process_chapter(repo: BookRepository, chapter: dict) -> None:
             reference_audio_path = voice_lib.get_voice_path(default_voice)
 
     if reference_audio_path is None and voice_alias:
-        raise ValueError(f"Voice '{voice_alias}' not found in library.")
+        raise PermanentChapterError(f"Voice '{voice_alias}' not found in library.")
 
     # Run generation in a thread to not block the asyncio loop
     loop = asyncio.get_event_loop()
@@ -122,8 +126,15 @@ async def book_worker_loop() -> None:
             except Exception as e:
                 logger.error(f"Failed to process chapter {chapter_id}: {e}")
                 retry_count = chapter["retry_count"]
+                is_permanent_error = isinstance(e, PermanentChapterError)
 
-                if retry_count < MAX_CHAPTER_RETRIES:
+                if is_permanent_error:
+                    logger.error(
+                        f"Chapter {chapter_id} has a permanent configuration error. "
+                        "Skipping retries and marking as failed."
+                    )
+                    repo.mark_chapter_failed(chapter_id, str(e), retry=False)
+                elif retry_count < MAX_CHAPTER_RETRIES:
                     logger.info(
                         f"Retrying chapter {chapter_id} (Attempt {retry_count + 1}/{MAX_CHAPTER_RETRIES})"
                     )

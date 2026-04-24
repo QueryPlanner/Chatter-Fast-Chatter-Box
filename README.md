@@ -30,7 +30,14 @@ docker build -t fast-chatterbox .
 docker run -p 8000:8000 fast-chatterbox
 ```
 
-The API will be available at http://localhost:8000
+The API will be available at http://localhost:8000.
+
+Verify the server:
+
+```bash
+curl http://localhost:8000/ping
+curl http://localhost:8000/health
+```
 
 ### Option 2: Local Development
 
@@ -57,6 +64,64 @@ uv run uvicorn app.main:app --reload
 
 > Internet is required for the first model download. After that, model files
 > are reused from your local cache.
+
+---
+
+## Usage in 60 Seconds
+
+1. Start the server (Docker or local development from Quick Start).
+2. Confirm readiness:
+   - `GET /ping` should return quickly.
+   - `GET /health` should report `"status": "healthy"`.
+3. Generate your first audio file:
+
+```bash
+curl -X POST http://localhost:8000/synthesize \
+  -F "text=Hello from Fast-Chatterbox" \
+  --output speech.mp3
+```
+
+4. Play the output:
+   - macOS: `open speech.mp3`
+   - Linux: `xdg-open speech.mp3`
+
+If you need a specific voice, list available options with:
+
+```bash
+curl http://localhost:8000/voices
+```
+
+---
+
+## Just ask Claude Code
+
+Use this prompt with Claude Code when you want it to deploy and run Fast-Chatterbox locally on a MacBook:
+
+```text
+You are in the Fast-Chatterbox repository on macOS.
+
+Goal:
+- Run Fast-Chatterbox locally and verify it works end-to-end.
+
+Please do the following:
+1) Check prerequisites and install missing tools:
+   - Homebrew (if needed)
+   - uv
+   - ffmpeg
+2) Install project dependencies with uv.
+3) Start the API server locally (uv run uvicorn app.main:app --reload).
+4) Verify startup using:
+   - GET /ping
+   - GET /health
+5) Run a synthesis request and save output to speech.mp3.
+6) Confirm the output file exists and report exact commands used.
+7) If anything fails, diagnose the root cause and fix it before continuing.
+
+Constraints:
+- Use safe, non-destructive commands only.
+- Explain each step briefly.
+- Stop only after the server is running and synthesis succeeds.
+```
 
 ---
 

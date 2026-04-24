@@ -2,12 +2,13 @@
 Book generation API endpoints.
 """
 
-import io
+import os
+import tempfile
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
 from app.core.database import BookRepository
 from app.models.book_models import (
@@ -53,7 +54,10 @@ async def create_book(request: CreateBookRequest) -> BookResponse:
     summary="List all books",
     description="List all submitted book jobs with their current status.",
 )
-async def list_books(limit: int = 100, offset: int = 0) -> BooksListResponse:
+async def list_books(
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> BooksListResponse:
     """List all books."""
     repo = BookRepository()
     books_data = repo.get_books(limit=limit, offset=offset)
@@ -208,11 +212,11 @@ async def download_chapter(book_id: str, chapter_number: int) -> FileResponse:
 
 @router.get(
     "/{book_id}/download",
-    response_class=Response,
+    response_class=FileResponse,
     summary="Download full book",
     description="Download all completed chapters as a ZIP file.",
 )
-async def download_book_zip(book_id: str) -> Response:
+async def download_book_zip(book_id: str, background_tasks: BackgroundTasks) -> FileResponse:
     """Download all completed chapters as a ZIP file."""
     repo = BookRepository()
     book = repo.get_book(book_id)
@@ -228,22 +232,29 @@ async def download_book_zip(book_id: str) -> Response:
             status_code=status.HTTP_400_BAD_REQUEST, detail="No completed chapters to download"
         )
 
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for ch in completed_chapters:
-            path = Path(ch["audio_path"])
-            if path.exists():
-                zip_file.write(path, arcname=path.name)
+    temp_zip = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    temp_zip_path = Path(temp_zip.name)
+    temp_zip.close()
 
-    zip_bytes = zip_buffer.getvalue()
+    try:
+        with zipfile.ZipFile(temp_zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for ch in completed_chapters:
+                path = Path(ch["audio_path"])
+                if path.exists():
+                    zip_file.write(path, arcname=path.name)
+    except Exception:
+        if temp_zip_path.exists():
+            temp_zip_path.unlink()
+        raise
 
     # Create a safe filename from the title
-    safe_title = "".join([c if c.isalnum() else "_" for c in book["title"]])
+    safe_title = "".join([c if c.isalnum() else "_" for c in book["title"]]).strip("_")
+    if not safe_title:
+        safe_title = f"book_{book_id[:8]}"
 
-    return Response(
-        content=zip_bytes,
+    background_tasks.add_task(os.remove, str(temp_zip_path))
+    return FileResponse(
+        path=temp_zip_path,
+        filename=f"{safe_title}.zip",
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{safe_title}.zip"',
-        },
     )

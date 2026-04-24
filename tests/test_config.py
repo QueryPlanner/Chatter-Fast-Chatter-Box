@@ -19,11 +19,13 @@ class TestConfig:
         assert Config.HOST == "0.0.0.0"
         assert Config.PORT == 8000
         assert Config.MAX_CHUNK_CHARS == 320
+        assert Config.MAX_SENTENCES_PER_CHUNK == 3
         assert Config.CHUNK_GAP_MS == 120
         assert Config.DEVICE == "auto"
         assert Config.DEFAULT_OUTPUT_FORMAT == "mp3"
         assert Config.WORKER_POLL_INTERVAL == 2
         assert Config.MAX_CHAPTER_RETRIES == 3
+        assert 1 <= Config.TORCH_NUM_THREADS <= 256
 
     def test_validate_valid_config(self):
         """Test validation passes with valid config."""
@@ -31,7 +33,8 @@ class TestConfig:
             with patch.object(Config, "CHUNK_GAP_MS", 100):
                 with patch.object(Config, "DEVICE", "cuda"):
                     with patch.object(Config, "DEFAULT_OUTPUT_FORMAT", "wav"):
-                        Config.validate()
+                        with patch.object(Config, "TORCH_NUM_THREADS", 8):
+                            Config.validate()
 
     def test_validate_invalid_max_chunk_chars_too_low(self):
         """Test validation fails with MAX_CHUNK_CHARS too low."""
@@ -43,6 +46,14 @@ class TestConfig:
         """Test validation fails with MAX_CHUNK_CHARS too high."""
         with patch.object(Config, "MAX_CHUNK_CHARS", 2000):
             with pytest.raises(ValueError, match="MAX_CHUNK_CHARS must be between 50 and 1000"):
+                Config.validate()
+
+    def test_validate_invalid_max_sentences_per_chunk(self):
+        """Test validation fails when MAX_SENTENCES_PER_CHUNK is out of range."""
+        with patch.object(Config, "MAX_SENTENCES_PER_CHUNK", 0):
+            with pytest.raises(
+                ValueError, match="MAX_SENTENCES_PER_CHUNK must be between 1 and 50"
+            ):
                 Config.validate()
 
     def test_validate_invalid_chunk_gap_ms_negative(self):
@@ -59,8 +70,19 @@ class TestConfig:
 
     def test_validate_invalid_device(self):
         """Test validation fails with invalid device."""
-        with patch.object(Config, "DEVICE", "invalid"):
-            with pytest.raises(ValueError, match="DEVICE must be auto, cuda, mps, or cpu"):
+        with patch.object(Config, "TORCH_NUM_THREADS", 4):
+            with patch.object(Config, "DEVICE", "invalid"):
+                with pytest.raises(
+                    ValueError, match="DEVICE must be auto, cuda, mps, or cpu"
+                ):
+                    Config.validate()
+
+    def test_validate_invalid_torch_num_threads_too_high(self):
+        """Test validation fails with TORCH_NUM_THREADS out of range."""
+        with patch.object(Config, "TORCH_NUM_THREADS", 500):
+            with pytest.raises(
+                ValueError, match="TORCH_NUM_THREADS must be between 1 and 256"
+            ):
                 Config.validate()
 
     def test_validate_invalid_output_format(self):
@@ -72,14 +94,16 @@ class TestConfig:
     def test_validate_device_case_insensitive(self):
         """Test device validation is case insensitive."""
         for device in ["CUDA", "Cuda", "cuda"]:
-            with patch.object(Config, "DEVICE", device):
-                Config.validate()
+            with patch.object(Config, "TORCH_NUM_THREADS", 4):
+                with patch.object(Config, "DEVICE", device):
+                    Config.validate()
 
     def test_validate_output_format_case_insensitive(self):
         """Test output format validation is case insensitive."""
         for fmt in ["MP3", "Mp3", "mp3"]:
-            with patch.object(Config, "DEFAULT_OUTPUT_FORMAT", fmt):
-                Config.validate()
+            with patch.object(Config, "TORCH_NUM_THREADS", 4):
+                with patch.object(Config, "DEFAULT_OUTPUT_FORMAT", fmt):
+                    Config.validate()
 
     def test_environment_variable_override(self, monkeypatch: pytest.MonkeyPatch):
         """Test that environment variables override defaults."""
@@ -87,6 +111,7 @@ class TestConfig:
         monkeypatch.setenv("PORT", "9000")
         monkeypatch.setenv("DEVICE", "cpu")
         monkeypatch.setenv("MAX_CHUNK_CHARS", "500")
+        monkeypatch.setenv("TORCH_NUM_THREADS", "4")
 
         import importlib
 
@@ -98,8 +123,11 @@ class TestConfig:
         assert app.config.Config.PORT == 9000
         assert app.config.Config.DEVICE == "cpu"
         assert app.config.Config.MAX_CHUNK_CHARS == 500
+        assert app.config.Config.TORCH_NUM_THREADS == 4
 
         monkeypatch.delenv("HOST")
         monkeypatch.delenv("PORT")
         monkeypatch.delenv("DEVICE")
         monkeypatch.delenv("MAX_CHUNK_CHARS")
+        monkeypatch.delenv("TORCH_NUM_THREADS")
+        importlib.reload(app.config)

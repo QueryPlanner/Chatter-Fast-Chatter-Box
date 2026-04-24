@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import re
 
+from app.config import Config
+
 # Split at sentence boundaries (after .!?)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def split_text_into_chunks(
-    text: str, max_sentences_per_chunk: int = 5, max_chunk_chars: int = 320
+    text: str,
+    max_sentences_per_chunk: int | None = None,
+    max_chunk_chars: int | None = None,
 ) -> list[str]:
     """
     Split text into chunks suitable for TTS generation.
@@ -24,12 +28,17 @@ def split_text_into_chunks(
 
     Args:
         text: The input text to split
-        max_sentences_per_chunk: Maximum sentences per chunk (default 5)
-        max_chunk_chars: Maximum characters per chunk (fallback default 320)
+        max_sentences_per_chunk: Maximum sentences per chunk (default from Config)
+        max_chunk_chars: Maximum characters per chunk (default from Config)
 
     Returns:
         List of text chunks
     """
+    if max_sentences_per_chunk is None:
+        max_sentences_per_chunk = Config.MAX_SENTENCES_PER_CHUNK
+    if max_chunk_chars is None:
+        max_chunk_chars = Config.MAX_CHUNK_CHARS
+
     text = text.strip()
     if not text:
         return []

@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.database import BookRepository
-from app.core.worker import book_worker_loop, get_book_output_dir, process_chapter
+from app.core.worker import (
+    PermanentChapterError,
+    book_worker_loop,
+    get_book_output_dir,
+    process_chapter,
+)
 
 
 class TestGetBookOutputDir:
@@ -209,7 +214,7 @@ class TestProcessChapter:
             await process_chapter(repo, chapter_dict)
 
             call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["max_sentences_per_chunk"] == 5
+            assert call_kwargs["max_sentences_per_chunk"] == 3
 
     @pytest.mark.asyncio
     async def test_process_chapter_default_voice_none(
@@ -420,3 +425,34 @@ class TestBookWorkerLoop:
 
         chapter = repo.get_chapter(book_id, 1)
         assert chapter["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_worker_permanent_error_skips_retries(self, temp_db: Path):
+        """Test that PermanentChapterError marks the chapter failed without retry."""
+
+        async def mock_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        repo = BookRepository()
+        book_id = repo.create_book(
+            title="Test Book",
+            voice=None,
+            output_format="mp3",
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text"}],
+            metadata={},
+        )
+
+        with (
+            patch("app.core.worker.is_ready", return_value=True),
+            patch("app.core.worker.BookRepository", return_value=repo),
+            patch(
+                "app.core.worker.process_chapter",
+                side_effect=PermanentChapterError("Unknown voice name"),
+            ),
+            patch("asyncio.sleep", side_effect=mock_sleep),
+        ):
+            await book_worker_loop()
+
+        chapter = repo.get_chapter(book_id, 1)
+        assert chapter["status"] == "failed"
+        assert chapter["retry_count"] == 0

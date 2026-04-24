@@ -4,7 +4,7 @@ Voice library management for TTS.
 Provides a simple voice library that:
 - Scans the voices/ directory for .wav files
 - Maintains metadata in voices.json
-- Supports aliases (e.g., "dan" -> "dan_prompt_1")
+- Supports aliases (e.g., "dan" -> "dan_carlin")
 - Allows voice upload and deletion
 """
 

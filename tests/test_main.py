@@ -73,6 +73,7 @@ class TestLifespan:
             ):
                 mock_config.validate = MagicMock()
                 mock_config.DEVICE = "cpu"
+                mock_config.TORCH_NUM_THREADS = 8
                 mock_config.MAX_CHUNK_CHARS = 320
                 mock_config.DEFAULT_OUTPUT_FORMAT = "mp3"
                 mock_config.DEFAULT_VOICE = "custom_voice"
@@ -104,6 +105,7 @@ class TestLifespan:
         ):
             mock_config.validate = MagicMock()
             mock_config.DEVICE = "cpu"
+            mock_config.TORCH_NUM_THREADS = 8
             mock_config.MAX_CHUNK_CHARS = 320
             mock_config.DEFAULT_OUTPUT_FORMAT = "mp3"
             mock_config.DEFAULT_VOICE = None
@@ -138,6 +140,7 @@ class TestLifespan:
         ):
             mock_config.validate = MagicMock()
             mock_config.DEVICE = "cpu"
+            mock_config.TORCH_NUM_THREADS = 8
             mock_config.MAX_CHUNK_CHARS = 320
             mock_config.DEFAULT_OUTPUT_FORMAT = "mp3"
             mock_config.DEFAULT_VOICE = None

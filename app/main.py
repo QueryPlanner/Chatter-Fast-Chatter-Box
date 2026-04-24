@@ -28,13 +28,11 @@ from app.core.worker import book_worker_loop
 logger = logging.getLogger(__name__)
 
 ASCII_BANNER = r"""
-  _____     _   _            _            _
- |  ___|_ _| |_| |_ ___ _ __| |__   _____| |_
- | |_ / _` | __| __/ _ \ '__| '_ \ / _ \ __|
- |  _| (_| | |_| ||  __/ |  | |_) |  __/ |_
- |_|  \__,_|\__|\__\___|_|  |_.__/ \___|\__|
-
-  Fast TTS Server powered by Chatterbox
+  ╭──────────────────────────╮
+  │  FAST-CHATTERBOX SERVER  │
+  │     ıllılı.ılılı.ılı     │
+  ╰─╮ ╭──────────────────────╯
+    ╰─╯ Powered by Chatterbox
 """
 
 
@@ -51,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Config.validate()
     logger.info("Configuration validated:")
     logger.info(f"  - Device: {Config.DEVICE}")
+    logger.info(f"  - CPU thread budget: {Config.TORCH_NUM_THREADS} (set TORCH_NUM_THREADS to limit)")
     logger.info(f"  - Max chunk chars: {Config.MAX_CHUNK_CHARS}")
     logger.info(f"  - Default output format: {Config.DEFAULT_OUTPUT_FORMAT}")
 

@@ -15,7 +15,37 @@ FastAPI server for Chatterbox TTS with voice cloning support.
 
 ## Quick Start
 
-### Option 1: Docker (Recommended)
+### Option 1: Local development with `uv` (recommended on macOS)
+
+On **macOS**, running the API directly on the host is usually **much faster** than
+Docker: PyTorch can use **MPS** (Apple GPU) when `DEVICE=auto`, whereas a
+container on Docker Desktop is Linux on a **virtual CPU** with **no Metal/MPS**,
+so synthesis is CPU-only and pays VM overhead. Use Docker when you need Linux
+deployment parity or server environments; for daily use on a Mac, prefer `uv`.
+
+**Prerequisites:** Python 3.11+, [uv](https://docs.astral.sh/uv/), and ffmpeg
+(`brew install ffmpeg` on macOS).
+
+```bash
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/fast-chatterbox.git
+cd fast-chatterbox
+
+# Install dependencies
+uv sync
+
+# Run the server (MPS on Apple Silicon when DEVICE=auto)
+uv run uvicorn app.main:app --reload
+# Or: bash scripts/dev.sh  (same, loads .env from repo root)
+```
+
+The API will be available at http://localhost:8000. Confirm `GET /health` shows
+your device (e.g. `mps` on Apple Silicon when the model is ready).
+
+> First startup downloads model weights through `ChatterboxTurboTTS.from_pretrained(...)`.
+> Internet is required once; after that, weights are cached locally.
+
+### Option 2: Docker
 
 ```bash
 # Clone the repository
@@ -23,7 +53,7 @@ git clone https://github.com/YOUR_USERNAME/fast-chatterbox.git
 cd fast-chatterbox
 
 # Start with docker-compose
-docker-compose up -d
+docker compose up -d
 
 # Or build and run manually
 docker build -t fast-chatterbox .
@@ -39,31 +69,36 @@ curl http://localhost:8000/ping
 curl http://localhost:8000/health
 ```
 
-### Option 2: Local Development
+### Option 3: macOS Background Service (LaunchDaemon)
 
-**Prerequisites:**
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) package manager
-- ffmpeg (for MP3 conversion: `brew install ffmpeg` on macOS)
+For a Mac you use daily, you can install Fast-Chatterbox as a permanent, auto-starting background service. This runs the native `uv` stack (giving you **MPS / Apple GPU** speed) in the background, automatically restarts if it crashes, and starts on boot.
 
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/fast-chatterbox.git
-cd fast-chatterbox
+**Installation (One-time setup):**
 
-# Install dependencies
-uv sync
+1. Install prerequisites: `brew install ffmpeg uv`
+2. Install Python dependencies: `uv sync`
+3. Create your `.env` file (copy from `.env.example` and ensure `HF_TOKEN` is set).
+4. Free up port 8000 if Docker is currently using it: `docker compose down`
+5. Warm up the model cache to prevent first-boot download timeouts:
+   ```bash
+   uv run python generate_turbo.py --text "warmup"
+   ```
+6. Install and start the daemon (prompts for password):
+   ```bash
+   bash scripts/install-launchd.sh
+   ```
 
-# Run the server
-uv run uvicorn app.main:app --reload
-```
+The API is now running at `http://localhost:8000` and will automatically start when your Mac boots. Check health with `curl http://localhost:8000/health` (expect `"device": "mps"` on Apple Silicon).
 
-> First startup downloads model weights automatically through
-> `ChatterboxTurboTTS.from_pretrained(...)`. This can take a few minutes
-> depending on your connection.
+**Managing the Service:**
 
-> Internet is required for the first model download. After that, model files
-> are reused from your local cache.
+- **View Logs:** `tail -f ~/Library/Logs/fast-chatterbox/stdout.log ~/Library/Logs/fast-chatterbox/stderr.log`
+- **Check Status:** `sudo launchctl print system/com.fastchatterbox.server | head`
+- **Restart:** `sudo launchctl kickstart -k system/com.fastchatterbox.server`
+- **Stop (until reboot):** `sudo launchctl bootout system/com.fastchatterbox.server`
+- **Uninstall completely:** `bash scripts/uninstall-launchd.sh`
+
+*(Note: For local development with hot-reload instead of the background daemon, run `bash scripts/dev.sh`)*
 
 ---
 
@@ -146,6 +181,7 @@ Generate speech from text.
 | `text` | string | Yes | - | Text to synthesize (max 10,000 chars) |
 | `voice` | string | No | dan | Voice name or alias from library |
 | `output_format` | string | No | mp3 | Output format: `mp3` or `wav` |
+| `max_sentences_per_chunk` | int | No | 3 | Max sentences per audio chunk (1-50) |
 | `max_chunk_chars` | int | No | 320 | Max characters per chunk (50-1000) |
 | `chunk_gap_ms` | int | No | 120 | Gap between chunks in milliseconds |
 | `reference_audio` | file | No | - | Upload custom reference audio for cloning |
@@ -203,15 +239,15 @@ curl http://localhost:8000/voices
 {
   "voices": [
     {
-      "name": "dan_prompt_1",
-      "filename": "dan_prompt_1.wav",
+      "name": "dan_carlin",
+      "filename": "dan_carlin.wav",
       "file_size": 3840078,
       "created": "2025-03-29T12:00:00",
       "exists": true
     }
   ],
   "count": 6,
-  "default_voice": "dan_prompt_1"
+  "default_voice": "dan_carlin"
 }
 ```
 
@@ -228,8 +264,8 @@ curl http://localhost:8000/voices/dan
 **Response:**
 ```json
 {
-  "name": "dan_prompt_1",
-  "filename": "dan_prompt_1.wav",
+  "name": "dan_carlin",
+  "filename": "dan_carlin.wav",
   "file_size": 3840078,
   "created": "2025-03-29T12:00:00",
   "exists": true
@@ -307,7 +343,7 @@ curl http://localhost:8000/health
   "status": "healthy",
   "model_loaded": true,
   "device": "mps",
-  "default_voice": "dan_prompt_1",
+  "default_voice": "dan_carlin",
   "error": null
 }
 ```
@@ -338,12 +374,12 @@ The server comes with pre-configured voices:
 
 | Name | Alias | File | Description |
 |------|-------|------|-------------|
-| `dan_prompt_1` | `dan` | dan_prompt_1.wav | Default voice - clear, professional |
-| `donald_prompt` | `donald` | donald_prompt.wav | Donald voice variant 1 |
-| `donald_prompt_2` | - | donald_prompt_2.wav | Donald voice variant 2 |
-| `donald_prompt_3` | - | donald_prompt_3.wav | Donald voice variant 3 |
-| `huberman_prompt` | `huberman` | huberman_prompt.wav | Huberman-style voice |
-| `snoop_dogg_prompt` | `snoop` | snoop_dogg_prompt.wav | Snoop Dogg-style voice |
+| `dan_carlin` | `dan` | dan_carlin.wav | Default voice (Dan Carlin style) |
+| `donald_trump` | `donald` | donald_trump.wav | Trump-style voice |
+| `donald_trump_2` | `donald_2` | donald_trump_2.wav | Trump-style variant 2 |
+| `donald_trump_3` | `donald_3` | donald_trump_3.wav | Trump-style variant 3 |
+| `andrew_huberman` | `huberman` | andrew_huberman.wav | Huberman-style voice |
+| `snoop_dogg` | `snoop` | snoop_dogg.wav | Snoop Dogg-style voice |
 
 Use either the full name or the alias in API calls.
 
@@ -359,11 +395,15 @@ HOST=0.0.0.0
 PORT=8000
 
 # TTS Configuration
+MAX_SENTENCES_PER_CHUNK=3  # Sentences per TTS chunk (1-50)
 MAX_CHUNK_CHARS=320      # Characters per chunk for long text
 CHUNK_GAP_MS=120         # Silence between chunks (milliseconds)
 
 # Device: auto, cuda, mps, or cpu
 DEVICE=auto
+
+# CPU: thread budget for PyTorch / OpenMP (0 = use all logical CPUs, 1–256 to set a cap)
+TORCH_NUM_THREADS=0
 
 # Default voice (name or alias)
 DEFAULT_VOICE=dan
@@ -376,8 +416,22 @@ DEFAULT_OUTPUT_FORMAT=mp3
 
 - `auto` - Automatically select best available (cuda > mps > cpu)
 - `cuda` - Force NVIDIA GPU
-- `mps` - Force Apple Silicon GPU
+- `mps` - Apple Silicon **Metal** (only when running **natively** on macOS, not
+  inside Docker on Mac, where the guest is Linux and typically **cpu**)
 - `cpu` - Force CPU (slowest but most compatible)
+
+### CPU thread budget (`TORCH_NUM_THREADS`)
+
+On CPU, synthesis speed depends on how many threads OpenMP, MKL, and PyTorch
+use. By default, `TORCH_NUM_THREADS=0` picks **all logical CPUs** the process
+is allowed to use. Set a positive number (1–256) to cap usage if you are
+running other services on the same host.
+
+- **Linux / macOS (native)**: the default is usually optimal; you can still cap
+  with `TORCH_NUM_THREADS=4` if needed.
+- **Docker Desktop (Mac/Windows)**: the container only sees the CPUs you assign
+  to the Docker VM. Increase that under **Settings → Resources** if generation
+  is still slow, and keep `TORCH_NUM_THREADS=0` so the app uses all of them.
 
 ---
 
@@ -385,15 +439,29 @@ DEFAULT_OUTPUT_FORMAT=mp3
 
 ### Basic Deployment
 
+Add a project `.env` (copy from `.env.example`) and set `HF_TOKEN` with a
+[Hugging Face read token](https://huggingface.co/settings/tokens) so the
+container can authenticate with the Hub (better rate limits and faster
+first-time downloads). `docker-compose.yml` passes `HF_TOKEN` into the service
+using Compose’s `.env` substitution; the file is not copied into the image.
+
+The image is built with `uv.lock` in the build context and `uv sync --frozen` so
+`resemble-perth` resolves exactly as on your machine (see `resemble-perth` from
+`tool.uv.sources` in `pyproject.toml`). **Do not** add `uv.lock` to
+`.dockerignore` or the container may install the wrong `perth` and fail model
+load with `'NoneType' object is not callable`. The first image build is slower
+because the Dockerfile installs a compiler toolchain needed for
+`praat-parselmouth` (a dependency of Git-based `resemble-perth` on Linux).
+
 ```bash
 # Build and run
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop
-docker-compose down
+docker compose down
 ```
 
 ### GPU Support (NVIDIA)
@@ -425,6 +493,8 @@ docker-compose up -d
 The default configuration mounts local directories:
 - `./voices` - Voice library (persist your custom voices)
 - `./outputs` - Generated audio files
+- Named volume `hf-cache` - Caches Hugging Face downloads under `/root/.cache/huggingface` so
+  model weights survive `docker compose down` and container rebuilds
 
 ---
 
@@ -438,7 +508,7 @@ uv run python generate_turbo.py --text "Hello world"
 
 # With specific reference audio
 uv run python generate_turbo.py \
-  --ref voices/dan_prompt_1.wav \
+  --ref voices/dan_carlin.wav \
   --text "Custom voice synthesis"
 
 # Save to specific file
@@ -459,10 +529,11 @@ uv run python generate_turbo.py \
 
 ```bash
 # Install dev dependencies
-uv sync --all-extras
+uv sync --group dev
 
 # Run with hot reload
 uv run uvicorn app.main:app --reload
+# Or: bash scripts/dev.sh
 
 # Run on specific port
 uv run uvicorn app.main:app --port 8080
@@ -476,12 +547,16 @@ uv run uvicorn app.main:app --port 8080
 
 If the model fails to load:
 1. Check available memory (model requires ~4GB RAM)
-2. Try forcing CPU mode: `DEVICE=cpu` in `.env`
-3. Check logs: `docker-compose logs -f`
-4. Verify startup sequence:
+2. If you see `'NoneType' object is not callable` right after download: the
+   `resemble-perth` (watermark) library must be the version from this repo’s
+   `pyproject.toml` / `uv.lock` (GitHub `resemble-ai/Perth`, not a broken PyPI
+   install). Re-run `uv sync` and rebuild the Docker image.
+3. Try forcing CPU mode: `DEVICE=cpu` in `.env`
+4. Check logs: `docker compose logs -f`
+5. Verify startup sequence:
    - `GET /ping` should return immediately
    - `GET /health` should move from `initializing` to `healthy`
-5. Warm up the model manually to confirm download/auth works:
+6. Warm up the model manually to confirm download/auth works:
    ```bash
    uv run python generate_turbo.py --text "test"
    ```

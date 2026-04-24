@@ -7,12 +7,15 @@ Based on generate_turbo.py - uses ChatterboxTurboTTS for faster generation.
 from __future__ import annotations
 
 import asyncio
+import logging
 
+from app.config import Config
 import torch
 from chatterbox.tts_turbo import ChatterboxTurboTTS
-
 from app.core.audio import concatenate_with_gap, tensor_to_audio_bytes
 from app.core.text import split_text_into_chunks
+
+logger = logging.getLogger(__name__)
 
 # Global model instance
 _model: ChatterboxTurboTTS | None = None
@@ -46,6 +49,27 @@ def resolve_device(explicit: str | None = None) -> str:
     return "cpu"
 
 
+def _apply_cpu_threading_budget() -> None:
+    """
+    Set PyTorch intra/inter-op threads for CPU-side work (e.g. convolutions, MP3
+    prep). OpenMP/MKL were configured from Config at import; this aligns torch.
+    """
+    num = Config.TORCH_NUM_THREADS
+    # Inter-op parallelism: small default keeps overhead low; scales slightly with n.
+    interop = max(1, min(8, num // 4 or 1))
+    try:
+        torch.set_num_interop_threads(interop)
+    except (RuntimeError, ValueError):
+        logger.debug("torch.set_num_interop_threads not applied (already in use)")
+
+    try:
+        torch.set_num_threads(num)
+    except (RuntimeError, ValueError) as e:
+        logger.warning("Could not set torch.set_num_threads(%s): %s", num, e)
+
+    logger.info("CPU inference thread budget: torch_threads=%s, interop=%s (OMP=%s)", num, interop, num)
+
+
 async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:
     """
     Initialize the ChatterboxTurboTTS model asynchronously.
@@ -68,6 +92,8 @@ async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:
             None, lambda: ChatterboxTurboTTS.from_pretrained(device=_device)
         )
 
+        _apply_cpu_threading_budget()
+
         _initialization_error = None
         print(f"Model loaded successfully on {_device}")
         return _model
@@ -75,6 +101,7 @@ async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:
     except Exception as e:
         _initialization_error = str(e)
         print(f"Failed to initialize model: {e}")
+        logger.exception("ChatterboxTurboTTS failed to load")
         raise
 
 
@@ -101,9 +128,9 @@ def is_ready() -> bool:
 def generate_speech(
     text: str,
     reference_audio_path: str | None = None,
-    max_sentences_per_chunk: int = 5,
-    max_chunk_chars: int = 320,
-    chunk_gap_ms: int = 120,
+    max_sentences_per_chunk: int | None = None,
+    max_chunk_chars: int | None = None,
+    chunk_gap_ms: int | None = None,
     output_format: str = "mp3",
 ) -> tuple[bytes, str]:
     """
@@ -132,9 +159,19 @@ def generate_speech(
     if _model is None:
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
+    resolved_max_sentences = (
+        max_sentences_per_chunk
+        if max_sentences_per_chunk is not None
+        else Config.MAX_SENTENCES_PER_CHUNK
+    )
+    resolved_max_chars = max_chunk_chars if max_chunk_chars is not None else Config.MAX_CHUNK_CHARS
+    resolved_gap_ms = chunk_gap_ms if chunk_gap_ms is not None else Config.CHUNK_GAP_MS
+
     # Split text into chunks
     chunks = split_text_into_chunks(
-        text, max_sentences_per_chunk=max_sentences_per_chunk, max_chunk_chars=max_chunk_chars
+        text,
+        max_sentences_per_chunk=resolved_max_sentences,
+        max_chunk_chars=resolved_max_chars,
     )
 
     print(f"Synthesizing {len(text)} characters in {len(chunks)} chunk(s) ...")
@@ -164,7 +201,7 @@ def generate_speech(
     final_audio = concatenate_with_gap(
         audio_tensors,
         _model.sr,
-        gap_ms=chunk_gap_ms,
+        gap_ms=resolved_gap_ms,
     )
 
     # Convert to output format

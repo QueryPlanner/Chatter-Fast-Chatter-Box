@@ -93,7 +93,7 @@ curl http://localhost:8000/voices
 
 ---
 
-## Just ask Claude code
+## Just ask Claude Code
 
 Use this prompt with Claude Code when you want it to deploy and run Fast-Chatterbox locally on a MacBook:
 

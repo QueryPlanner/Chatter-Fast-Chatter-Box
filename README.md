@@ -69,132 +69,36 @@ curl http://localhost:8000/ping
 curl http://localhost:8000/health
 ```
 
-### Option 3: macOS LaunchDaemon (MPS, crash restart, auto-start at boot)
+### Option 3: macOS Background Service (LaunchDaemon)
 
-For a Mac you use daily, you can run the same stack as Option 1 under a
-**system LaunchDaemon**: native `uv` + `uvicorn` (no `--reload`), **MPS** when
-`DEVICE=auto`, **restart on crash**, logs under `~/Library/Logs/fast-chatterbox/`,
-and **start at login/boot**. `Dockerfile` / `docker-compose.yml` stay as-is for
-Linux deploy and CI.
+For a Mac you use daily, you can install Fast-Chatterbox as a permanent, auto-starting background service. This runs the native `uv` stack (giving you **MPS / Apple GPU** speed) in the background, automatically restarts if it crashes, and starts on boot.
 
-**Day 0 (one-time, from a fresh clone):**
+**Installation (One-time setup):**
 
-1. `brew install ffmpeg uv` (skip if already installed).
-2. `cd /path/to/Chatter-Fast-Chatter-Box && uv sync --frozen` (or `uv sync` if you
-   are not using a committed lockfile).
-3. Ensure `.env` has `HF_TOKEN` (and any other vars you rely on); copy from
-   `.env.example` if needed.
-4. Warm the model cache as your user (avoids first-boot download failures in the
-   daemon):
-   `uv run python generate_turbo.py --text "warmup"`
-5. Free port 8000: `docker compose down` if a container is still listening.
-6. `bash scripts/install-launchd.sh` (prompts for `sudo` to install the plist).
-7. `curl http://localhost:8000/health` — expect `"device": "mps"` on Apple
-   Silicon (when Metal is available) and `"model_loaded": true`.
+1. Install prerequisites: `brew install ffmpeg uv`
+2. Install Python dependencies: `uv sync`
+3. Create your `.env` file (copy from `.env.example` and ensure `HF_TOKEN` is set).
+4. Free up port 8000 if Docker is currently using it: `docker compose down`
+5. Warm up the model cache to prevent first-boot download timeouts:
+   ```bash
+   uv run python generate_turbo.py --text "warmup"
+   ```
+6. Install and start the daemon (prompts for password):
+   ```bash
+   bash scripts/install-launchd.sh
+   ```
 
-Prod-style process (no reload) is started by
-`scripts/start-prod.sh` (`uv run --frozen uvicorn …`). For local iteration with
-hot reload, use `bash scripts/dev.sh` (stop the daemon first if port 8000 is
-busy — see **Stopping the server** below).
+The API is now running at `http://localhost:8000` and will automatically start when your Mac boots. Check health with `curl http://localhost:8000/health` (expect `"device": "mps"` on Apple Silicon).
 
-**Day 1 (daily ops):**
+**Managing the Service:**
 
-- Status: `sudo launchctl print system/com.fastchatterbox.server | head`
-- Tail logs:
-  `tail -f ~/Library/Logs/fast-chatterbox/stdout.log ~/Library/Logs/fast-chatterbox/stderr.log`
-- Force restart:
-  `sudo launchctl kickstart -k system/com.fastchatterbox.server`
-- Uninstall: `bash scripts/uninstall-launchd.sh` (optional `--purge-logs`)
+- **View Logs:** `tail -f ~/Library/Logs/fast-chatterbox/stdout.log ~/Library/Logs/fast-chatterbox/stderr.log`
+- **Check Status:** `sudo launchctl print system/com.fastchatterbox.server | head`
+- **Restart:** `sudo launchctl kickstart -k system/com.fastchatterbox.server`
+- **Stop (until reboot):** `sudo launchctl bootout system/com.fastchatterbox.server`
+- **Uninstall completely:** `bash scripts/uninstall-launchd.sh`
 
-#### Runtime comparison
-
-| Mode | Typical Mac device | Wins | Trade-offs |
-|------|-------------------|------|------------|
-| **Docker on Mac** | `cpu` in Linux VM (no Metal/MPS) | Reproducible image, `restart: unless-stopped`, simple `compose up/down` | Slower, VM CPU/RAM overhead, no MPS |
-| **LaunchDaemon + `uv` (this option)** | `mps` on Apple Silicon when `DEVICE=auto` | Native speed, crash restart, boot start, persistent stdout/stderr logs | No container isolation; tied to host Python / `uv` / ffmpeg |
-| **Docker for deploy only** | N/A locally | Same image as Linux servers / CI | Use Options 1 or 3 for daily Mac TTS |
-
-#### Risks and caveats
-
-- **Full Disk Access**: usually unnecessary for a repo under your home directory;
-  if the daemon cannot read `voices/` on first boot, check macOS privacy settings.
-- **First-run weights**: warm the cache (Day 0 step 4) so the daemon does not
-  depend on Hub access immediately at boot.
-- **MPS at boot**: in rare cases Metal may not be ready very early; verify with
-  `GET /health` after reboot.
-- **Port conflict**: if something else holds `:8000`, launchd may respawn in a
-  loop — run `lsof -nP -iTCP:8000 -sTCP:LISTEN` and stop the other process.
-- **`uv` location**: the installer records the resolved `uv` path in the plist.
-  If you move `uv`, re-run `scripts/install-launchd.sh`.
-- **`app/main.py`**: may still default to `reload=True` for `python -m` style
-  entrypoints; the daemon bypasses that by invoking `uvicorn` directly.
-
-#### Stopping the server
-
-- **Stop once, keep installed, do not auto-start on next boot** (unload until you
-  bootstrap again):
-
-  ```bash
-  sudo launchctl bootout system/com.fastchatterbox.server
-  ```
-
-  The plist remains in `/Library/LaunchDaemons/`. Bring it back without reboot:
-
-  ```bash
-  sudo launchctl bootstrap system /Library/LaunchDaemons/com.fastchatterbox.server.plist
-  ```
-
-- **Disable across reboots** (still installed):
-
-  ```bash
-  sudo launchctl disable system/com.fastchatterbox.server
-  sudo launchctl bootout  system/com.fastchatterbox.server
-  ```
-
-  Re-enable:
-
-  ```bash
-  sudo launchctl enable    system/com.fastchatterbox.server
-  sudo launchctl bootstrap system /Library/LaunchDaemons/com.fastchatterbox.server.plist
-  ```
-
-- **Uninstall completely** (stop, remove plist; logs kept unless purged):
-
-  ```bash
-  bash scripts/uninstall-launchd.sh
-  ```
-
-  Pass `--purge-logs` to also remove `~/Library/Logs/fast-chatterbox/`.
-
-- **Emergency stop** (crash loop or stubborn process; `KeepAlive` respawns
-  after `kill -9` unless you disable or bootout first):
-
-  ```bash
-  pgrep -fa 'uvicorn app.main:app' ; pgrep -fa 'start-prod.sh'
-  sudo launchctl disable system/com.fastchatterbox.server
-  sudo kill -9 <pid>
-  sudo launchctl enable    system/com.fastchatterbox.server
-  sudo launchctl kickstart -k system/com.fastchatterbox.server
-  ```
-
-- **Dev server** (`bash scripts/dev.sh`): stop with `Ctrl+C` in that terminal, or
-  `pkill -f 'uvicorn app.main:app'` if orphaned (check `pgrep -fa` first if both
-  daemon and dev might be running).
-
-- **Docker** (old container on 8000): `docker compose down`
-
-- **Check listeners on 8000:**
-
-  ```bash
-  lsof -nP -iTCP:8000 -sTCP:LISTEN
-  ```
-
-#### Verify after reboot (optional)
-
-- `curl http://localhost:8000/health` — `device` should be `mps` when Metal is
-  available; `model_loaded` should be `true`.
-- Crash restart: `kill -9` the `uvicorn` worker PID and confirm launchd respawns
-  after the `ThrottleInterval` (10s) in the plist.
+*(Note: For local development with hot-reload instead of the background daemon, run `bash scripts/dev.sh`)*
 
 ---
 

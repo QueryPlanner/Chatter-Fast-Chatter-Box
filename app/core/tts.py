@@ -50,6 +50,27 @@ def resolve_device(explicit: str | None = None) -> str:
     return "cpu"
 
 
+def _apply_cpu_threading_budget() -> None:
+    """
+    Set PyTorch intra/inter-op threads for CPU-side work (e.g. convolutions, MP3
+    prep). OpenMP/MKL were configured from Config at import; this aligns torch.
+    """
+    num = Config.TORCH_NUM_THREADS
+    # Inter-op parallelism: small default keeps overhead low; scales slightly with n.
+    interop = max(1, min(8, num // 4 or 1))
+    try:
+        torch.set_num_interop_threads(interop)
+    except (RuntimeError, ValueError):
+        logger.debug("torch.set_num_interop_threads not applied (already in use)")
+
+    try:
+        torch.set_num_threads(num)
+    except (RuntimeError, ValueError) as e:
+        logger.warning("Could not set torch.set_num_threads(%s): %s", num, e)
+
+    print(f"CPU inference thread budget: torch_threads={num}, interop={interop} (OMP={num})")
+
+
 async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:
     """
     Initialize the ChatterboxTurboTTS model asynchronously.
@@ -71,6 +92,8 @@ async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:
         _model = await loop.run_in_executor(
             None, lambda: ChatterboxTurboTTS.from_pretrained(device=_device)
         )
+
+        _apply_cpu_threading_budget()
 
         _initialization_error = None
         print(f"Model loaded successfully on {_device}")

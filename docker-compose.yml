@@ -7,12 +7,19 @@ services:
       - ./voices:/app/voices
       - ./outputs:/app/outputs
       - ./data:/app/data
+      # Speed up restarts: reuse downloaded model weights across container recreates.
+      - hf-cache:/root/.cache/huggingface
     environment:
       - HOST=0.0.0.0
       - PORT=8000
       - DEVICE=auto
+      # Use all available logical CPUs for OpenMP / PyTorch on CPU. Set a number (e.g. 4) to cap.
+      # On Docker Desktop, also increase CPUs under Settings > Resources.
+      - TORCH_NUM_THREADS=0
       - DEFAULT_VOICE=dan
       - DEFAULT_OUTPUT_FORMAT=mp3
+      # Compose reads the project .env and substitutes; huggingface_hub uses HF_TOKEN
+      - HF_TOKEN=${HF_TOKEN:-}
     restart: unless-stopped
     # For GPU support, uncomment the following:
     # deploy:
@@ -22,3 +29,6 @@ services:
     #         - driver: nvidia
     #           count: 1
     #           capabilities: [gpu]
+
+volumes:
+  hf-cache:

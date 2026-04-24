@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Config.validate()
     logger.info("Configuration validated:")
     logger.info(f"  - Device: {Config.DEVICE}")
+    logger.info(f"  - CPU thread budget: {Config.TORCH_NUM_THREADS} (set TORCH_NUM_THREADS to limit)")
     logger.info(f"  - Max chunk chars: {Config.MAX_CHUNK_CHARS}")
     logger.info(f"  - Default output format: {Config.DEFAULT_OUTPUT_FORMAT}")
 

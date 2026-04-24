@@ -45,5 +45,5 @@ tests/
 outputs/*.wav
 outputs/*.mp3
 
-# UV lock file (regenerated)
-uv.lock
+# Note: `uv.lock` is intentionally not ignored so Docker can copy it for
+# reproducible `uv sync --frozen` installs (e.g. resemble-perth from Git).

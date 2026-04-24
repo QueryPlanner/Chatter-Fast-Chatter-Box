@@ -52,3 +52,6 @@ data/
 # UV
 .uv/
 uv.lock
+
+# LaunchDaemon installer (user-specific rendered plist)
+scripts/com.fastchatterbox.server.rendered.plist

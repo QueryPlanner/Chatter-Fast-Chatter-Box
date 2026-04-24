@@ -15,7 +15,37 @@ FastAPI server for Chatterbox TTS with voice cloning support.
 
 ## Quick Start
 
-### Option 1: Docker (Recommended)
+### Option 1: Local development with `uv` (recommended on macOS)
+
+On **macOS**, running the API directly on the host is usually **much faster** than
+Docker: PyTorch can use **MPS** (Apple GPU) when `DEVICE=auto`, whereas a
+container on Docker Desktop is Linux on a **virtual CPU** with **no Metal/MPS**,
+so synthesis is CPU-only and pays VM overhead. Use Docker when you need Linux
+deployment parity or server environments; for daily use on a Mac, prefer `uv`.
+
+**Prerequisites:** Python 3.11+, [uv](https://docs.astral.sh/uv/), and ffmpeg
+(`brew install ffmpeg` on macOS).
+
+```bash
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/fast-chatterbox.git
+cd fast-chatterbox
+
+# Install dependencies
+uv sync
+
+# Run the server (MPS on Apple Silicon when DEVICE=auto)
+uv run uvicorn app.main:app --reload
+# Or: bash scripts/dev.sh  (same, loads .env from repo root)
+```
+
+The API will be available at http://localhost:8000. Confirm `GET /health` shows
+your device (e.g. `mps` on Apple Silicon when the model is ready).
+
+> First startup downloads model weights through `ChatterboxTurboTTS.from_pretrained(...)`.
+> Internet is required once; after that, weights are cached locally.
+
+### Option 2: Docker
 
 ```bash
 # Clone the repository
@@ -23,7 +53,7 @@ git clone https://github.com/YOUR_USERNAME/fast-chatterbox.git
 cd fast-chatterbox
 
 # Start with docker-compose
-docker-compose up -d
+docker compose up -d
 
 # Or build and run manually
 docker build -t fast-chatterbox .
@@ -39,31 +69,132 @@ curl http://localhost:8000/ping
 curl http://localhost:8000/health
 ```
 
-### Option 2: Local Development
+### Option 3: macOS LaunchDaemon (MPS, crash restart, auto-start at boot)
 
-**Prerequisites:**
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) package manager
-- ffmpeg (for MP3 conversion: `brew install ffmpeg` on macOS)
+For a Mac you use daily, you can run the same stack as Option 1 under a
+**system LaunchDaemon**: native `uv` + `uvicorn` (no `--reload`), **MPS** when
+`DEVICE=auto`, **restart on crash**, logs under `~/Library/Logs/fast-chatterbox/`,
+and **start at login/boot**. `Dockerfile` / `docker-compose.yml` stay as-is for
+Linux deploy and CI.
 
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/fast-chatterbox.git
-cd fast-chatterbox
+**Day 0 (one-time, from a fresh clone):**
 
-# Install dependencies
-uv sync
+1. `brew install ffmpeg uv` (skip if already installed).
+2. `cd /path/to/Chatter-Fast-Chatter-Box && uv sync --frozen` (or `uv sync` if you
+   are not using a committed lockfile).
+3. Ensure `.env` has `HF_TOKEN` (and any other vars you rely on); copy from
+   `.env.example` if needed.
+4. Warm the model cache as your user (avoids first-boot download failures in the
+   daemon):
+   `uv run python generate_turbo.py --text "warmup"`
+5. Free port 8000: `docker compose down` if a container is still listening.
+6. `bash scripts/install-launchd.sh` (prompts for `sudo` to install the plist).
+7. `curl http://localhost:8000/health` — expect `"device": "mps"` on Apple
+   Silicon (when Metal is available) and `"model_loaded": true`.
 
-# Run the server
-uv run uvicorn app.main:app --reload
-```
+Prod-style process (no reload) is started by
+`scripts/start-prod.sh` (`uv run --frozen uvicorn …`). For local iteration with
+hot reload, use `bash scripts/dev.sh` (stop the daemon first if port 8000 is
+busy — see **Stopping the server** below).
 
-> First startup downloads model weights automatically through
-> `ChatterboxTurboTTS.from_pretrained(...)`. This can take a few minutes
-> depending on your connection.
+**Day 1 (daily ops):**
 
-> Internet is required for the first model download. After that, model files
-> are reused from your local cache.
+- Status: `sudo launchctl print system/com.fastchatterbox.server | head`
+- Tail logs:
+  `tail -f ~/Library/Logs/fast-chatterbox/stdout.log ~/Library/Logs/fast-chatterbox/stderr.log`
+- Force restart:
+  `sudo launchctl kickstart -k system/com.fastchatterbox.server`
+- Uninstall: `bash scripts/uninstall-launchd.sh` (optional `--purge-logs`)
+
+#### Runtime comparison
+
+| Mode | Typical Mac device | Wins | Trade-offs |
+|------|-------------------|------|------------|
+| **Docker on Mac** | `cpu` in Linux VM (no Metal/MPS) | Reproducible image, `restart: unless-stopped`, simple `compose up/down` | Slower, VM CPU/RAM overhead, no MPS |
+| **LaunchDaemon + `uv` (this option)** | `mps` on Apple Silicon when `DEVICE=auto` | Native speed, crash restart, boot start, persistent stdout/stderr logs | No container isolation; tied to host Python / `uv` / ffmpeg |
+| **Docker for deploy only** | N/A locally | Same image as Linux servers / CI | Use Options 1 or 3 for daily Mac TTS |
+
+#### Risks and caveats
+
+- **Full Disk Access**: usually unnecessary for a repo under your home directory;
+  if the daemon cannot read `voices/` on first boot, check macOS privacy settings.
+- **First-run weights**: warm the cache (Day 0 step 4) so the daemon does not
+  depend on Hub access immediately at boot.
+- **MPS at boot**: in rare cases Metal may not be ready very early; verify with
+  `GET /health` after reboot.
+- **Port conflict**: if something else holds `:8000`, launchd may respawn in a
+  loop — run `lsof -nP -iTCP:8000 -sTCP:LISTEN` and stop the other process.
+- **`uv` location**: the installer records the resolved `uv` path in the plist.
+  If you move `uv`, re-run `scripts/install-launchd.sh`.
+- **`app/main.py`**: may still default to `reload=True` for `python -m` style
+  entrypoints; the daemon bypasses that by invoking `uvicorn` directly.
+
+#### Stopping the server
+
+- **Stop once, keep installed, do not auto-start on next boot** (unload until you
+  bootstrap again):
+
+  ```bash
+  sudo launchctl bootout system/com.fastchatterbox.server
+  ```
+
+  The plist remains in `/Library/LaunchDaemons/`. Bring it back without reboot:
+
+  ```bash
+  sudo launchctl bootstrap system /Library/LaunchDaemons/com.fastchatterbox.server.plist
+  ```
+
+- **Disable across reboots** (still installed):
+
+  ```bash
+  sudo launchctl disable system/com.fastchatterbox.server
+  sudo launchctl bootout  system/com.fastchatterbox.server
+  ```
+
+  Re-enable:
+
+  ```bash
+  sudo launchctl enable    system/com.fastchatterbox.server
+  sudo launchctl bootstrap system /Library/LaunchDaemons/com.fastchatterbox.server.plist
+  ```
+
+- **Uninstall completely** (stop, remove plist; logs kept unless purged):
+
+  ```bash
+  bash scripts/uninstall-launchd.sh
+  ```
+
+  Pass `--purge-logs` to also remove `~/Library/Logs/fast-chatterbox/`.
+
+- **Emergency stop** (crash loop or stubborn process; `KeepAlive` respawns
+  after `kill -9` unless you disable or bootout first):
+
+  ```bash
+  pgrep -fa 'uvicorn app.main:app' ; pgrep -fa 'start-prod.sh'
+  sudo launchctl disable system/com.fastchatterbox.server
+  sudo kill -9 <pid>
+  sudo launchctl enable    system/com.fastchatterbox.server
+  sudo launchctl kickstart -k system/com.fastchatterbox.server
+  ```
+
+- **Dev server** (`bash scripts/dev.sh`): stop with `Ctrl+C` in that terminal, or
+  `pkill -f 'uvicorn app.main:app'` if orphaned (check `pgrep -fa` first if both
+  daemon and dev might be running).
+
+- **Docker** (old container on 8000): `docker compose down`
+
+- **Check listeners on 8000:**
+
+  ```bash
+  lsof -nP -iTCP:8000 -sTCP:LISTEN
+  ```
+
+#### Verify after reboot (optional)
+
+- `curl http://localhost:8000/health` — `device` should be `mps` when Metal is
+  available; `model_loaded` should be `true`.
+- Crash restart: `kill -9` the `uvicorn` worker PID and confirm launchd respawns
+  after the `ThrottleInterval` (10s) in the plist.
 
 ---
 
@@ -367,6 +498,9 @@ CHUNK_GAP_MS=120         # Silence between chunks (milliseconds)
 # Device: auto, cuda, mps, or cpu
 DEVICE=auto
 
+# CPU: thread budget for PyTorch / OpenMP (0 = use all logical CPUs, 1–256 to set a cap)
+TORCH_NUM_THREADS=0
+
 # Default voice (name or alias)
 DEFAULT_VOICE=dan
 
@@ -378,8 +512,22 @@ DEFAULT_OUTPUT_FORMAT=mp3
 
 - `auto` - Automatically select best available (cuda > mps > cpu)
 - `cuda` - Force NVIDIA GPU
-- `mps` - Force Apple Silicon GPU
+- `mps` - Apple Silicon **Metal** (only when running **natively** on macOS, not
+  inside Docker on Mac, where the guest is Linux and typically **cpu**)
 - `cpu` - Force CPU (slowest but most compatible)
+
+### CPU thread budget (`TORCH_NUM_THREADS`)
+
+On CPU, synthesis speed depends on how many threads OpenMP, MKL, and PyTorch
+use. By default, `TORCH_NUM_THREADS=0` picks **all logical CPUs** the process
+is allowed to use. Set a positive number (1–256) to cap usage if you are
+running other services on the same host.
+
+- **Linux / macOS (native)**: the default is usually optimal; you can still cap
+  with `TORCH_NUM_THREADS=4` if needed.
+- **Docker Desktop (Mac/Windows)**: the container only sees the CPUs you assign
+  to the Docker VM. Increase that under **Settings → Resources** if generation
+  is still slow, and keep `TORCH_NUM_THREADS=0` so the app uses all of them.
 
 ---
 
@@ -481,6 +629,7 @@ uv sync --group dev
 
 # Run with hot reload
 uv run uvicorn app.main:app --reload
+# Or: bash scripts/dev.sh
 
 # Run on specific port
 uv run uvicorn app.main:app --port 8080

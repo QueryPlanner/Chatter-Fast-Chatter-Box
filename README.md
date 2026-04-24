@@ -51,6 +51,13 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
+> First startup downloads model weights automatically through
+> `ChatterboxTurboTTS.from_pretrained(...)`. This can take a few minutes
+> depending on your connection.
+
+> Internet is required for the first model download. After that, model files
+> are reused from your local cache.
+
 ---
 
 ## API Documentation
@@ -406,6 +413,26 @@ If the model fails to load:
 1. Check available memory (model requires ~4GB RAM)
 2. Try forcing CPU mode: `DEVICE=cpu` in `.env`
 3. Check logs: `docker-compose logs -f`
+4. Verify startup sequence:
+   - `GET /ping` should return immediately
+   - `GET /health` should move from `initializing` to `healthy`
+5. Warm up the model manually to confirm download/auth works:
+   ```bash
+   uv run python generate_turbo.py --text "test"
+   ```
+
+### Startup Import Errors
+
+If startup fails before `/health` is available (for example
+`ModuleNotFoundError`), the model initialization step never runs. Fix import
+errors first, then restart the server so the model can download/load.
+
+### First-Run Download Notes
+
+- First run may be slow while model artifacts are downloaded.
+- If your network is restricted, run once on an unrestricted connection.
+- Re-running after a completed download should be much faster because cached
+  artifacts are reused.
 
 ### MP3 Conversion Fails
 

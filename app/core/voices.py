@@ -11,10 +11,9 @@ Provides a simple voice library that:
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 # Default voices directory
 DEFAULT_VOICES_DIR = Path(__file__).parent.parent.parent / "voices"
@@ -26,7 +25,7 @@ SUPPORTED_FORMATS = {".wav", ".mp3", ".flac", ".m4a", ".ogg"}
 class VoiceLibrary:
     """Manages a library of voice samples for TTS."""
 
-    def __init__(self, voices_dir: Optional[Path] = None):
+    def __init__(self, voices_dir: Path | None = None):
         self.voices_dir = Path(voices_dir) if voices_dir else DEFAULT_VOICES_DIR
         self.metadata_file = self.voices_dir / "voices.json"
         self._ensure_directory()
@@ -36,16 +35,16 @@ class VoiceLibrary:
         """Ensure the voices directory exists."""
         self.voices_dir.mkdir(parents=True, exist_ok=True)
 
-    def _load_metadata(self) -> Dict[str, Any]:
+    def _load_metadata(self) -> dict[str, Any]:
         """Load voice metadata from JSON file."""
         if self.metadata_file.exists():
             try:
-                with open(self.metadata_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                with open(self.metadata_file, encoding="utf-8") as f:
+                    data: dict[str, Any] = json.load(f)
+                    return data
             except (json.JSONDecodeError, FileNotFoundError):
                 pass
 
-        # Default metadata structure
         return {
             "voices": {},
             "aliases": {},
@@ -58,7 +57,7 @@ class VoiceLibrary:
         with open(self.metadata_file, "w", encoding="utf-8") as f:
             json.dump(self._metadata, f, indent=2, ensure_ascii=False)
 
-    def scan_voices(self) -> List[str]:
+    def scan_voices(self) -> list[str]:
         """
         Scan the voices directory for audio files.
 
@@ -83,10 +82,7 @@ class VoiceLibrary:
                     }
 
         # Remove voices that no longer exist
-        to_remove = [
-            name for name in self._metadata["voices"]
-            if name not in found_voices
-        ]
+        to_remove = [name for name in self._metadata["voices"] if name not in found_voices]
         for name in to_remove:
             del self._metadata["voices"][name]
 
@@ -95,7 +91,7 @@ class VoiceLibrary:
 
         return found_voices
 
-    def get_voice_path(self, name: str) -> Optional[str]:
+    def get_voice_path(self, name: str) -> str | None:
         """
         Get the file path for a voice by name or alias.
 
@@ -120,7 +116,8 @@ class VoiceLibrary:
 
     def get_default_voice(self) -> str:
         """Get the default voice name."""
-        return self._metadata.get("default_voice", "dan")
+        default: str = self._metadata.get("default_voice", "dan")
+        return default
 
     def set_default_voice(self, name: str) -> bool:
         """
@@ -164,7 +161,7 @@ class VoiceLibrary:
         self._save_metadata()
         return True
 
-    def list_voices(self) -> List[Dict[str, Any]]:
+    def list_voices(self) -> list[dict[str, Any]]:
         """
         List all voices in the library.
 
@@ -173,17 +170,19 @@ class VoiceLibrary:
         """
         voices = []
 
-        for name, metadata in self._metadata["voices"].items():
+        for _name, metadata in self._metadata["voices"].items():
             voice_path = Path(metadata["path"])
             if voice_path.exists():
-                voices.append({
-                    **metadata,
-                    "exists": True,
-                })
+                voices.append(
+                    {
+                        **metadata,
+                        "exists": True,
+                    }
+                )
 
         return voices
 
-    def get_voice_info(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_voice_info(self, name: str) -> dict[str, Any] | None:
         """
         Get detailed information about a voice.
 
@@ -216,7 +215,7 @@ class VoiceLibrary:
         voice_name: str,
         file_content: bytes,
         original_filename: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Add a new voice to the library.
 
@@ -239,7 +238,7 @@ class VoiceLibrary:
         voice_name = voice_name.strip()
 
         # Check for invalid characters
-        invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+        invalid_chars = ["/", "\\", ":", "*", "?", '"', "<", ">", "|"]
         if any(char in voice_name for char in invalid_chars):
             raise ValueError(f"Voice name contains invalid characters: {invalid_chars}")
 
@@ -247,8 +246,7 @@ class VoiceLibrary:
         file_ext = Path(original_filename).suffix.lower()
         if file_ext not in SUPPORTED_FORMATS:
             raise ValueError(
-                f"Unsupported format: {file_ext}. "
-                f"Supported: {', '.join(SUPPORTED_FORMATS)}"
+                f"Unsupported format: {file_ext}. Supported: {', '.join(SUPPORTED_FORMATS)}"
             )
 
         # Check if already exists
@@ -305,8 +303,7 @@ class VoiceLibrary:
 
         # Remove any aliases pointing to this voice
         aliases_to_remove = [
-            alias for alias, target in self._metadata.get("aliases", {}).items()
-            if target == name
+            alias for alias, target in self._metadata.get("aliases", {}).items() if target == name
         ]
         for alias in aliases_to_remove:
             del self._metadata["aliases"][alias]
@@ -320,7 +317,7 @@ class VoiceLibrary:
 
 
 # Global instance
-_voice_library: Optional[VoiceLibrary] = None
+_voice_library: VoiceLibrary | None = None
 
 
 def get_voice_library() -> VoiceLibrary:

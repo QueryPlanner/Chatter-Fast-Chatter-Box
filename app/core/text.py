@@ -7,13 +7,14 @@ Ported from generate_turbo.py - uses sentence-based chunking at punctuation boun
 from __future__ import annotations
 
 import re
-from typing import List
 
 # Split at sentence boundaries (after .!?)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
-def split_text_into_chunks(text: str, max_chunk_chars: int = 320) -> List[str]:
+def split_text_into_chunks(
+    text: str, max_sentences_per_chunk: int = 5, max_chunk_chars: int = 320
+) -> list[str]:
     """
     Split text into chunks suitable for TTS generation.
 
@@ -23,7 +24,8 @@ def split_text_into_chunks(text: str, max_chunk_chars: int = 320) -> List[str]:
 
     Args:
         text: The input text to split
-        max_chunk_chars: Maximum characters per chunk (default 320)
+        max_sentences_per_chunk: Maximum sentences per chunk (default 5)
+        max_chunk_chars: Maximum characters per chunk (fallback default 320)
 
     Returns:
         List of text chunks
@@ -34,11 +36,11 @@ def split_text_into_chunks(text: str, max_chunk_chars: int = 320) -> List[str]:
 
     # Split into sentences
     sentences = [s.strip() for s in _SENTENCE_SPLIT.split(text) if s.strip()]
-    if not sentences:
+    if not sentences:  # pragma: no cover
         return [text]
 
-    chunks: List[str] = []
-    current_parts: List[str] = []
+    chunks: list[str] = []
+    current_parts: list[str] = []
     current_len = 0
 
     def flush() -> None:
@@ -49,7 +51,7 @@ def split_text_into_chunks(text: str, max_chunk_chars: int = 320) -> List[str]:
         current_len = 0
 
     for part in sentences:
-        # If single sentence exceeds max, split it at max_chunk_chars
+        # If single sentence exceeds max characters, split it at max_chunk_chars
         if len(part) > max_chunk_chars:
             flush()
             for start in range(0, len(part), max_chunk_chars):
@@ -58,13 +60,18 @@ def split_text_into_chunks(text: str, max_chunk_chars: int = 320) -> List[str]:
                     chunks.append(segment)
             continue
 
-        # Check if adding this sentence would exceed the limit
-        extra = len(part) + (1 if current_parts else 0)
-        if current_len + extra > max_chunk_chars:
+        # Check if adding this sentence would exceed the limit (either sentences or chars)
+        extra_chars = len(part) + (1 if current_parts else 0)
+        would_exceed_sentences = len(current_parts) >= max_sentences_per_chunk
+        would_exceed_chars = current_len + extra_chars > max_chunk_chars
+
+        # It's better to flush if we hit sentence limit, but for backwards compat / safety
+        # we still respect max_chunk_chars if it's set very strictly. We prioritize sentence count.
+        if would_exceed_sentences or would_exceed_chars:
             flush()
 
         current_parts.append(part)
-        current_len += extra
+        current_len += extra_chars
 
     flush()
     return chunks

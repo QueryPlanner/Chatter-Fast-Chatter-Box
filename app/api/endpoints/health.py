@@ -4,9 +4,9 @@ Health check endpoint.
 
 from fastapi import APIRouter
 
-from app.models.responses import HealthResponse
-from app.core.tts import get_model, get_device, get_initialization_error, is_ready
+from app.core.tts import get_device, get_initialization_error, get_model
 from app.core.voices import get_voice_library
+from app.models.responses import HealthResponse
 
 router = APIRouter(tags=["health"])
 

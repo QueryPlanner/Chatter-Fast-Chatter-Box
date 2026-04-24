@@ -2,12 +2,11 @@
 Voice library endpoints.
 """
 
-from typing import List
-from fastapi import APIRouter, HTTPException, status, File, UploadFile, Form
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
-from app.models.responses import VoiceInfo, VoicesResponse, ErrorResponse
-from app.core.voices import get_voice_library, SUPPORTED_FORMATS
+from app.core.voices import SUPPORTED_FORMATS, get_voice_library
+from app.models.responses import VoiceInfo, VoicesResponse
 
 router = APIRouter(prefix="/voices", tags=["voices"])
 
@@ -55,10 +54,12 @@ async def get_voice_info(voice_name: str) -> VoiceInfo:
     if info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {
-                "message": f"Voice '{voice_name}' not found",
-                "type": "voice_not_found",
-            }},
+            detail={
+                "error": {
+                    "message": f"Voice '{voice_name}' not found",
+                    "type": "voice_not_found",
+                }
+            },
         )
 
     return VoiceInfo(
@@ -85,15 +86,22 @@ async def upload_voice(
 
     Supported formats: wav, mp3, flac, m4a, ogg
     """
-    # Validate file extension
+    if voice_file.filename is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"message": "Filename is required", "type": "validation_error"}},
+        )
+
     file_ext = "." + voice_file.filename.rsplit(".", 1)[-1].lower()
     if file_ext not in SUPPORTED_FORMATS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {
-                "message": f"Unsupported format: {file_ext}. Supported: {', '.join(SUPPORTED_FORMATS)}",
-                "type": "invalid_format",
-            }},
+            detail={
+                "error": {
+                    "message": f"Unsupported format: {file_ext}. Supported: {', '.join(SUPPORTED_FORMATS)}",
+                    "type": "invalid_format",
+                }
+            },
         )
 
     # Read file content
@@ -107,12 +115,12 @@ async def upload_voice(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": {"message": str(e), "type": "voice_exists"}},
-        )
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"message": str(e), "type": "validation_error"}},
-        )
+        ) from e
 
     return {
         "message": "Voice uploaded successfully",
@@ -137,10 +145,12 @@ async def delete_voice(voice_name: str) -> dict:
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {
-                "message": f"Voice '{voice_name}' not found",
-                "type": "voice_not_found",
-            }},
+            detail={
+                "error": {
+                    "message": f"Voice '{voice_name}' not found",
+                    "type": "voice_not_found",
+                }
+            },
         )
 
     return {"message": f"Voice '{voice_name}' deleted successfully"}
@@ -159,10 +169,12 @@ async def set_default_voice(voice_name: str = Form(...)) -> dict:
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {
-                "message": f"Voice '{voice_name}' not found",
-                "type": "voice_not_found",
-            }},
+            detail={
+                "error": {
+                    "message": f"Voice '{voice_name}' not found",
+                    "type": "voice_not_found",
+                }
+            },
         )
 
     return {
@@ -185,10 +197,12 @@ async def download_voice(voice_name: str) -> FileResponse:
     if voice_path is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {
-                "message": f"Voice '{voice_name}' not found",
-                "type": "voice_not_found",
-            }},
+            detail={
+                "error": {
+                    "message": f"Voice '{voice_name}' not found",
+                    "type": "voice_not_found",
+                }
+            },
         )
 
     return FileResponse(

@@ -19,6 +19,7 @@ class TestConfig:
         assert Config.HOST == "0.0.0.0"
         assert Config.PORT == 8000
         assert Config.MAX_CHUNK_CHARS == 320
+        assert Config.MAX_SENTENCES_PER_CHUNK == 3
         assert Config.CHUNK_GAP_MS == 120
         assert Config.DEVICE == "auto"
         assert Config.DEFAULT_OUTPUT_FORMAT == "mp3"
@@ -43,6 +44,14 @@ class TestConfig:
         """Test validation fails with MAX_CHUNK_CHARS too high."""
         with patch.object(Config, "MAX_CHUNK_CHARS", 2000):
             with pytest.raises(ValueError, match="MAX_CHUNK_CHARS must be between 50 and 1000"):
+                Config.validate()
+
+    def test_validate_invalid_max_sentences_per_chunk(self):
+        """Test validation fails when MAX_SENTENCES_PER_CHUNK is out of range."""
+        with patch.object(Config, "MAX_SENTENCES_PER_CHUNK", 0):
+            with pytest.raises(
+                ValueError, match="MAX_SENTENCES_PER_CHUNK must be between 1 and 50"
+            ):
                 Config.validate()
 
     def test_validate_invalid_chunk_gap_ms_negative(self):

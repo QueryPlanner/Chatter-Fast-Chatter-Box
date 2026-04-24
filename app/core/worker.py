@@ -46,9 +46,9 @@ async def process_chapter(repo: BookRepository, chapter: dict) -> None:
         with contextlib.suppress(json.JSONDecodeError):
             metadata = json.loads(metadata_json)
 
-    max_sentences = metadata.get("max_sentences_per_chunk", 5)
-    max_chars = metadata.get("max_chunk_chars", 320)
-    gap_ms = metadata.get("chunk_gap_ms", 120)
+    max_sentences = metadata.get("max_sentences_per_chunk", Config.MAX_SENTENCES_PER_CHUNK)
+    max_chars = metadata.get("max_chunk_chars", Config.MAX_CHUNK_CHARS)
+    gap_ms = metadata.get("chunk_gap_ms", Config.CHUNK_GAP_MS)
 
     # Determine voice path
     reference_audio_path = None

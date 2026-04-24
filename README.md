@@ -146,6 +146,7 @@ Generate speech from text.
 | `text` | string | Yes | - | Text to synthesize (max 10,000 chars) |
 | `voice` | string | No | dan | Voice name or alias from library |
 | `output_format` | string | No | mp3 | Output format: `mp3` or `wav` |
+| `max_sentences_per_chunk` | int | No | 3 | Max sentences per audio chunk (1-50) |
 | `max_chunk_chars` | int | No | 320 | Max characters per chunk (50-1000) |
 | `chunk_gap_ms` | int | No | 120 | Gap between chunks in milliseconds |
 | `reference_audio` | file | No | - | Upload custom reference audio for cloning |
@@ -203,15 +204,15 @@ curl http://localhost:8000/voices
 {
   "voices": [
     {
-      "name": "dan_prompt_1",
-      "filename": "dan_prompt_1.wav",
+      "name": "dan_carlin",
+      "filename": "dan_carlin.wav",
       "file_size": 3840078,
       "created": "2025-03-29T12:00:00",
       "exists": true
     }
   ],
   "count": 6,
-  "default_voice": "dan_prompt_1"
+  "default_voice": "dan_carlin"
 }
 ```
 
@@ -228,8 +229,8 @@ curl http://localhost:8000/voices/dan
 **Response:**
 ```json
 {
-  "name": "dan_prompt_1",
-  "filename": "dan_prompt_1.wav",
+  "name": "dan_carlin",
+  "filename": "dan_carlin.wav",
   "file_size": 3840078,
   "created": "2025-03-29T12:00:00",
   "exists": true
@@ -307,7 +308,7 @@ curl http://localhost:8000/health
   "status": "healthy",
   "model_loaded": true,
   "device": "mps",
-  "default_voice": "dan_prompt_1",
+  "default_voice": "dan_carlin",
   "error": null
 }
 ```
@@ -338,12 +339,12 @@ The server comes with pre-configured voices:
 
 | Name | Alias | File | Description |
 |------|-------|------|-------------|
-| `dan_prompt_1` | `dan` | dan_prompt_1.wav | Default voice - clear, professional |
-| `donald_prompt` | `donald` | donald_prompt.wav | Donald voice variant 1 |
-| `donald_prompt_2` | - | donald_prompt_2.wav | Donald voice variant 2 |
-| `donald_prompt_3` | - | donald_prompt_3.wav | Donald voice variant 3 |
-| `huberman_prompt` | `huberman` | huberman_prompt.wav | Huberman-style voice |
-| `snoop_dogg_prompt` | `snoop` | snoop_dogg_prompt.wav | Snoop Dogg-style voice |
+| `dan_carlin` | `dan` | dan_carlin.wav | Default voice (Dan Carlin style) |
+| `donald_trump` | `donald` | donald_trump.wav | Trump-style voice |
+| `donald_trump_2` | `donald_2` | donald_trump_2.wav | Trump-style variant 2 |
+| `donald_trump_3` | `donald_3` | donald_trump_3.wav | Trump-style variant 3 |
+| `andrew_huberman` | `huberman` | andrew_huberman.wav | Huberman-style voice |
+| `snoop_dogg` | `snoop` | snoop_dogg.wav | Snoop Dogg-style voice |
 
 Use either the full name or the alias in API calls.
 
@@ -359,6 +360,7 @@ HOST=0.0.0.0
 PORT=8000
 
 # TTS Configuration
+MAX_SENTENCES_PER_CHUNK=3  # Sentences per TTS chunk (1-50)
 MAX_CHUNK_CHARS=320      # Characters per chunk for long text
 CHUNK_GAP_MS=120         # Silence between chunks (milliseconds)
 
@@ -385,15 +387,29 @@ DEFAULT_OUTPUT_FORMAT=mp3
 
 ### Basic Deployment
 
+Add a project `.env` (copy from `.env.example`) and set `HF_TOKEN` with a
+[Hugging Face read token](https://huggingface.co/settings/tokens) so the
+container can authenticate with the Hub (better rate limits and faster
+first-time downloads). `docker-compose.yml` passes `HF_TOKEN` into the service
+using Compose’s `.env` substitution; the file is not copied into the image.
+
+The image is built with `uv.lock` in the build context and `uv sync --frozen` so
+`resemble-perth` resolves exactly as on your machine (see `resemble-perth` from
+`tool.uv.sources` in `pyproject.toml`). **Do not** add `uv.lock` to
+`.dockerignore` or the container may install the wrong `perth` and fail model
+load with `'NoneType' object is not callable`. The first image build is slower
+because the Dockerfile installs a compiler toolchain needed for
+`praat-parselmouth` (a dependency of Git-based `resemble-perth` on Linux).
+
 ```bash
 # Build and run
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop
-docker-compose down
+docker compose down
 ```
 
 ### GPU Support (NVIDIA)
@@ -425,6 +441,8 @@ docker-compose up -d
 The default configuration mounts local directories:
 - `./voices` - Voice library (persist your custom voices)
 - `./outputs` - Generated audio files
+- Named volume `hf-cache` - Caches Hugging Face downloads under `/root/.cache/huggingface` so
+  model weights survive `docker compose down` and container rebuilds
 
 ---
 
@@ -438,7 +456,7 @@ uv run python generate_turbo.py --text "Hello world"
 
 # With specific reference audio
 uv run python generate_turbo.py \
-  --ref voices/dan_prompt_1.wav \
+  --ref voices/dan_carlin.wav \
   --text "Custom voice synthesis"
 
 # Save to specific file
@@ -459,7 +477,7 @@ uv run python generate_turbo.py \
 
 ```bash
 # Install dev dependencies
-uv sync --all-extras
+uv sync --group dev
 
 # Run with hot reload
 uv run uvicorn app.main:app --reload
@@ -476,12 +494,16 @@ uv run uvicorn app.main:app --port 8080
 
 If the model fails to load:
 1. Check available memory (model requires ~4GB RAM)
-2. Try forcing CPU mode: `DEVICE=cpu` in `.env`
-3. Check logs: `docker-compose logs -f`
-4. Verify startup sequence:
+2. If you see `'NoneType' object is not callable` right after download: the
+   `resemble-perth` (watermark) library must be the version from this repo’s
+   `pyproject.toml` / `uv.lock` (GitHub `resemble-ai/Perth`, not a broken PyPI
+   install). Re-run `uv sync` and rebuild the Docker image.
+3. Try forcing CPU mode: `DEVICE=cpu` in `.env`
+4. Check logs: `docker compose logs -f`
+5. Verify startup sequence:
    - `GET /ping` should return immediately
    - `GET /health` should move from `initializing` to `healthy`
-5. Warm up the model manually to confirm download/auth works:
+6. Warm up the model manually to confirm download/auth works:
    ```bash
    uv run python generate_turbo.py --text "test"
    ```

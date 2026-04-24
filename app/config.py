@@ -24,6 +24,7 @@ class Config:
     # TTS settings
     MAX_CHUNK_CHARS: int = int(os.getenv("MAX_CHUNK_CHARS", "320"))
     CHUNK_GAP_MS: int = int(os.getenv("CHUNK_GAP_MS", "120"))
+    MAX_SENTENCES_PER_CHUNK: int = int(os.getenv("MAX_SENTENCES_PER_CHUNK", "3"))
 
     # Device: auto, cuda, mps, or cpu
     DEVICE: str = os.getenv("DEVICE", "auto")
@@ -49,6 +50,12 @@ class Config:
 
         if cls.CHUNK_GAP_MS < 0 or cls.CHUNK_GAP_MS > 1000:
             raise ValueError(f"CHUNK_GAP_MS must be between 0 and 1000, got {cls.CHUNK_GAP_MS}")
+
+        if cls.MAX_SENTENCES_PER_CHUNK < 1 or cls.MAX_SENTENCES_PER_CHUNK > 50:
+            raise ValueError(
+                f"MAX_SENTENCES_PER_CHUNK must be between 1 and 50, "
+                f"got {cls.MAX_SENTENCES_PER_CHUNK}"
+            )
 
         if cls.DEVICE.lower() not in ("auto", "cuda", "mps", "cpu"):
             raise ValueError(f"DEVICE must be auto, cuda, mps, or cpu, got {cls.DEVICE}")

@@ -174,7 +174,7 @@ def sample_book_request() -> dict[str, Any]:
             },
         ],
         "config": {
-            "max_sentences_per_chunk": 5,
+            "max_sentences_per_chunk": 3,
             "max_chunk_chars": 320,
             "chunk_gap_ms": 120,
         },

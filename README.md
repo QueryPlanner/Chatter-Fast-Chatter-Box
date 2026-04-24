@@ -109,7 +109,7 @@ Please do the following:
    - uv
    - ffmpeg
 2) Install project dependencies with uv.
-3) Start the API server locally (uvicorn app.main:app --reload).
+3) Start the API server locally (uv run uvicorn app.main:app --reload).
 4) Verify startup using:
    - GET /ping
    - GET /health

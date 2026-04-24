@@ -9,10 +9,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app.config import Config
 import torch
 from chatterbox.tts_turbo import ChatterboxTurboTTS
-
-from app.config import Config
 from app.core.audio import concatenate_with_gap, tensor_to_audio_bytes
 from app.core.text import split_text_into_chunks
 
@@ -68,7 +67,7 @@ def _apply_cpu_threading_budget() -> None:
     except (RuntimeError, ValueError) as e:
         logger.warning("Could not set torch.set_num_threads(%s): %s", num, e)
 
-    print(f"CPU inference thread budget: torch_threads={num}, interop={interop} (OMP={num})")
+    logger.info("CPU inference thread budget: torch_threads=%s, interop=%s (OMP=%s)", num, interop, num)
 
 
 async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:

@@ -51,7 +51,7 @@ fi
 mkdir -p "${LOG_DIR}"
 
 escape_sed_literal() {
-  printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
+  printf '%s' "$1" | sed -e 's/[|&]/\\&/g'
 }
 
 render_plist() {

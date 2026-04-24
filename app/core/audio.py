@@ -7,20 +7,20 @@ Handles format conversion (WAV -> MP3) and audio concatenation.
 from __future__ import annotations
 
 import io
-from typing import List
 
 import torch
 
 # pydub is used for audio format conversion
 try:
     from pydub import AudioSegment
+
     PYDUB_AVAILABLE = True
 except ImportError:
     PYDUB_AVAILABLE = False
 
 
 def concatenate_with_gap(
-    audio_tensors: List[torch.Tensor],
+    audio_tensors: list[torch.Tensor],
     sample_rate: int,
     gap_ms: int = 120,
 ) -> torch.Tensor:
@@ -46,13 +46,14 @@ def concatenate_with_gap(
 
     # Create silence tensor
     silence = torch.zeros(
-        1, gap_samples,
+        1,
+        gap_samples,
         dtype=audio_tensors[0].dtype,
         device=audio_tensors[0].device,
     )
 
     # Interleave audio with silence
-    pieces: List[torch.Tensor] = []
+    pieces: list[torch.Tensor] = []
     for i, tensor in enumerate(audio_tensors):
         pieces.append(tensor)
         if i < len(audio_tensors) - 1 and gap_samples > 0:
@@ -115,7 +116,7 @@ def tensor_to_audio_bytes(
     wav_buffer = io.BytesIO()
 
     # Ensure tensor is on CPU for saving
-    if hasattr(audio_tensor, 'cpu'):
+    if hasattr(audio_tensor, "cpu"):
         audio_tensor = audio_tensor.cpu()
 
     ta.save(wav_buffer, audio_tensor, sample_rate, format="wav")

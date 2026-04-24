@@ -7,13 +7,14 @@ Ported from generate_turbo.py - uses sentence-based chunking at punctuation boun
 from __future__ import annotations
 
 import re
-from typing import List
 
 # Split at sentence boundaries (after .!?)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
-def split_text_into_chunks(text: str, max_sentences_per_chunk: int = 5, max_chunk_chars: int = 320) -> List[str]:
+def split_text_into_chunks(
+    text: str, max_sentences_per_chunk: int = 5, max_chunk_chars: int = 320
+) -> list[str]:
     """
     Split text into chunks suitable for TTS generation.
 
@@ -35,11 +36,11 @@ def split_text_into_chunks(text: str, max_sentences_per_chunk: int = 5, max_chun
 
     # Split into sentences
     sentences = [s.strip() for s in _SENTENCE_SPLIT.split(text) if s.strip()]
-    if not sentences:
+    if not sentences:  # pragma: no cover
         return [text]
 
-    chunks: List[str] = []
-    current_parts: List[str] = []
+    chunks: list[str] = []
+    current_parts: list[str] = []
     current_len = 0
 
     def flush() -> None:

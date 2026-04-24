@@ -7,22 +7,20 @@ Based on generate_turbo.py - uses ChatterboxTurboTTS for faster generation.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional, List
 
 import torch
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 
-from app.core.text import split_text_into_chunks
 from app.core.audio import concatenate_with_gap, tensor_to_audio_bytes
-
+from app.core.text import split_text_into_chunks
 
 # Global model instance
-_model: Optional[ChatterboxTurboTTS] = None
-_device: Optional[str] = None
-_initialization_error: Optional[str] = None
+_model: ChatterboxTurboTTS | None = None
+_device: str | None = None
+_initialization_error: str | None = None
 
 
-def resolve_device(explicit: Optional[str] = None) -> str:
+def resolve_device(explicit: str | None = None) -> str:
     """
     Determine the best available device for TTS.
 
@@ -41,17 +39,14 @@ def resolve_device(explicit: Optional[str] = None) -> str:
         return "cuda"
 
     # Check for MPS (Apple Silicon)
-    mps_available = (
-        hasattr(torch.backends, "mps") and
-        torch.backends.mps.is_available()
-    )
+    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     if mps_available:
         return "mps"
 
     return "cpu"
 
 
-async def initialize_model(device: Optional[str] = None) -> ChatterboxTurboTTS:
+async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:
     """
     Initialize the ChatterboxTurboTTS model asynchronously.
 
@@ -70,8 +65,7 @@ async def initialize_model(device: Optional[str] = None) -> ChatterboxTurboTTS:
         # Run model loading in executor to avoid blocking
         loop = asyncio.get_event_loop()
         _model = await loop.run_in_executor(
-            None,
-            lambda: ChatterboxTurboTTS.from_pretrained(device=_device)
+            None, lambda: ChatterboxTurboTTS.from_pretrained(device=_device)
         )
 
         _initialization_error = None
@@ -84,17 +78,17 @@ async def initialize_model(device: Optional[str] = None) -> ChatterboxTurboTTS:
         raise
 
 
-def get_model() -> Optional[ChatterboxTurboTTS]:
+def get_model() -> ChatterboxTurboTTS | None:
     """Get the current model instance."""
     return _model
 
 
-def get_device() -> Optional[str]:
+def get_device() -> str | None:
     """Get the current device."""
     return _device
 
 
-def get_initialization_error() -> Optional[str]:
+def get_initialization_error() -> str | None:
     """Get initialization error if any."""
     return _initialization_error
 
@@ -106,7 +100,7 @@ def is_ready() -> bool:
 
 def generate_speech(
     text: str,
-    reference_audio_path: Optional[str] = None,
+    reference_audio_path: str | None = None,
     max_sentences_per_chunk: int = 5,
     max_chunk_chars: int = 320,
     chunk_gap_ms: int = 120,
@@ -139,12 +133,14 @@ def generate_speech(
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
     # Split text into chunks
-    chunks = split_text_into_chunks(text, max_sentences_per_chunk=max_sentences_per_chunk, max_chunk_chars=max_chunk_chars)
+    chunks = split_text_into_chunks(
+        text, max_sentences_per_chunk=max_sentences_per_chunk, max_chunk_chars=max_chunk_chars
+    )
 
     print(f"Synthesizing {len(text)} characters in {len(chunks)} chunk(s) ...")
 
     # Generate audio for each chunk
-    audio_tensors: List[torch.Tensor] = []
+    audio_tensors: list[torch.Tensor] = []
 
     for index, chunk in enumerate(chunks):
         print(f"  Chunk {index + 1}/{len(chunks)} ({len(chunk)} chars) ...")

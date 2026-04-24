@@ -4,12 +4,12 @@ API router configuration.
 
 from fastapi import APIRouter
 
+from app.api.endpoints.books import router as books_router
+from app.api.endpoints.health import router as health_router
 from app.api.endpoints.speech import router as speech_router
 from app.api.endpoints.voices import router as voices_router
-from app.api.endpoints.health import router as health_router
-from app.api.endpoints.books import router as books_router
 
-api_router = APIRouter()
+api_router = APIRouter(prefix="/api")
 
 # Include all endpoint routers
 api_router.include_router(health_router)

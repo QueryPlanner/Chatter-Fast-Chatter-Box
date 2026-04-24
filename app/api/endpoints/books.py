@@ -5,7 +5,6 @@ Book generation API endpoints.
 import io
 import zipfile
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse, Response
@@ -33,10 +32,10 @@ router = APIRouter(prefix="/books", tags=["books"])
 async def create_book(request: CreateBookRequest) -> BookResponse:
     """Submit a new book for processing."""
     repo = BookRepository()
-    
+
     # Extract config into dict
     metadata = request.config.model_dump()
-    
+
     book_id = repo.create_book(
         title=request.title,
         voice=request.voice,
@@ -44,7 +43,7 @@ async def create_book(request: CreateBookRequest) -> BookResponse:
         chapters=[ch.model_dump() for ch in request.chapters],
         metadata=metadata,
     )
-    
+
     return await get_book(book_id)
 
 
@@ -58,7 +57,7 @@ async def list_books(limit: int = 100, offset: int = 0) -> BooksListResponse:
     """List all books."""
     repo = BookRepository()
     books_data = repo.get_books(limit=limit, offset=offset)
-    
+
     books = [
         BookListItem(
             id=row["id"],
@@ -70,7 +69,7 @@ async def list_books(limit: int = 100, offset: int = 0) -> BooksListResponse:
         )
         for row in books_data
     ]
-    
+
     return BooksListResponse(books=books, count=len(books))
 
 
@@ -84,17 +83,17 @@ async def get_book(book_id: str) -> BookResponse:
     """Get detailed book status."""
     repo = BookRepository()
     book = repo.get_book(book_id)
-    
+
     if not book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
-        
+
     chapters_data = repo.get_chapters(book_id)
-    
+
     # Calculate progress
     total_chapters = book["total_chapters"]
     counts = {"completed": 0, "failed": 0, "pending": 0, "processing": 0}
     chapters = []
-    
+
     for ch in chapters_data:
         counts[ch["status"]] = counts.get(ch["status"], 0) + 1
         chapters.append(
@@ -107,9 +106,9 @@ async def get_book(book_id: str) -> BookResponse:
                 retry_count=ch["retry_count"],
             )
         )
-        
+
     percent_complete = (counts["completed"] / total_chapters) * 100 if total_chapters > 0 else 0
-    
+
     progress = BookProgress(
         total_chapters=total_chapters,
         completed=counts["completed"],
@@ -118,7 +117,7 @@ async def get_book(book_id: str) -> BookResponse:
         processing=counts["processing"],
         percent_complete=round(percent_complete, 2),
     )
-    
+
     return BookResponse(
         id=book["id"],
         title=book["title"],
@@ -143,16 +142,16 @@ async def cancel_book(book_id: str) -> dict:
     """Cancel a book job."""
     repo = BookRepository()
     book = repo.get_book(book_id)
-    
+
     if not book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
-        
+
     if book["status"] not in ("queued", "processing"):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"Cannot cancel book in status '{book['status']}'"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel book in status '{book['status']}'",
         )
-        
+
     repo.mark_book_cancelled(book_id)
     return {"message": f"Book {book_id} cancelled successfully."}
 
@@ -166,10 +165,10 @@ async def retry_book(book_id: str) -> dict:
     """Retry failed chapters in a book."""
     repo = BookRepository()
     book = repo.get_book(book_id)
-    
+
     if not book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
-        
+
     repo.retry_failed_chapters(book_id)
     return {"message": f"Retrying failed chapters for book {book_id}."}
 
@@ -184,20 +183,22 @@ async def download_chapter(book_id: str, chapter_number: int) -> FileResponse:
     """Download a single chapter's audio."""
     repo = BookRepository()
     chapter = repo.get_chapter(book_id, chapter_number)
-    
+
     if not chapter:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found")
-        
+
     if chapter["status"] != "completed" or not chapter["audio_path"]:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"Chapter {chapter_number} is not completed (status: {chapter['status']})"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Chapter {chapter_number} is not completed (status: {chapter['status']})",
         )
-        
+
     path = Path(chapter["audio_path"])
     if not path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file missing on disk")
-        
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Audio file missing on disk"
+        )
+
     return FileResponse(
         path,
         filename=path.name,
@@ -215,28 +216,30 @@ async def download_book_zip(book_id: str) -> Response:
     """Download all completed chapters as a ZIP file."""
     repo = BookRepository()
     book = repo.get_book(book_id)
-    
+
     if not book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
-        
+
     chapters = repo.get_chapters(book_id)
     completed_chapters = [ch for ch in chapters if ch["status"] == "completed" and ch["audio_path"]]
-    
+
     if not completed_chapters:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No completed chapters to download")
-        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No completed chapters to download"
+        )
+
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for ch in completed_chapters:
             path = Path(ch["audio_path"])
             if path.exists():
                 zip_file.write(path, arcname=path.name)
-                
+
     zip_bytes = zip_buffer.getvalue()
-    
+
     # Create a safe filename from the title
     safe_title = "".join([c if c.isalnum() else "_" for c in book["title"]])
-    
+
     return Response(
         content=zip_bytes,
         media_type="application/zip",

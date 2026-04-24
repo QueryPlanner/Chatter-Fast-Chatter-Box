@@ -11,7 +11,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.config import Config
 
@@ -80,7 +80,7 @@ def init_db() -> None:
 class BookRepository:
     """Repository for managing book and chapter data in SQLite."""
 
-    def __init__(self, conn: Optional[sqlite3.Connection] = None):
+    def __init__(self, conn: sqlite3.Connection | None = None):
         """Initialize with an optional connection. If none provided, a new one is created per operation."""
         self._conn = conn
 
@@ -92,10 +92,10 @@ class BookRepository:
     def create_book(
         self,
         title: str,
-        voice: Optional[str],
+        voice: str | None,
         output_format: str,
-        chapters: List[Dict[str, Any]],
-        metadata: Dict[str, Any]
+        chapters: list[dict[str, Any]],
+        metadata: dict[str, Any],
     ) -> str:
         """
         Create a new book and its chapters.
@@ -118,7 +118,7 @@ class BookRepository:
             conn.execute(
                 """
                 INSERT INTO books (
-                    id, title, voice, output_format, status, total_chapters, 
+                    id, title, voice, output_format, status, total_chapters,
                     created_at, updated_at, metadata_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -131,19 +131,13 @@ class BookRepository:
                     len(chapters),
                     now,
                     now,
-                    json.dumps(metadata)
-                )
+                    json.dumps(metadata),
+                ),
             )
 
             # Insert chapters
             chapter_rows = [
-                (
-                    book_id,
-                    ch["chapter_number"],
-                    ch.get("title"),
-                    ch["text"],
-                    "pending"
-                )
+                (book_id, ch["chapter_number"], ch.get("title"), ch["text"], "pending")
                 for ch in chapters
             ]
             conn.executemany(
@@ -151,60 +145,61 @@ class BookRepository:
                 INSERT INTO chapters (book_id, chapter_number, title, text, status)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                chapter_rows
+                chapter_rows,
             )
             conn.commit()
 
         return book_id
 
-    def get_book(self, book_id: str) -> Optional[sqlite3.Row]:
+    def get_book(self, book_id: str) -> sqlite3.Row | None:
         """Get a book by ID."""
         with self._get_conn() as conn:
             cursor = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,))
-            return cursor.fetchone()
+            row: sqlite3.Row | None = cursor.fetchone()
+            return row
 
-    def get_books(self, limit: int = 100, offset: int = 0) -> List[sqlite3.Row]:
+    def get_books(self, limit: int = 100, offset: int = 0) -> list[sqlite3.Row]:
         """Get a list of books ordered by creation time."""
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "SELECT * FROM books ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset)
+                "SELECT * FROM books ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)
             )
             return cursor.fetchall()
 
-    def get_chapters(self, book_id: str) -> List[sqlite3.Row]:
+    def get_chapters(self, book_id: str) -> list[sqlite3.Row]:
         """Get all chapters for a book, ordered by chapter_number."""
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "SELECT * FROM chapters WHERE book_id = ? ORDER BY chapter_number ASC",
-                (book_id,)
+                "SELECT * FROM chapters WHERE book_id = ? ORDER BY chapter_number ASC", (book_id,)
             )
             return cursor.fetchall()
 
-    def get_chapter(self, book_id: str, chapter_number: int) -> Optional[sqlite3.Row]:
+    def get_chapter(self, book_id: str, chapter_number: int) -> sqlite3.Row | None:
         """Get a specific chapter."""
         with self._get_conn() as conn:
             cursor = conn.execute(
                 "SELECT * FROM chapters WHERE book_id = ? AND chapter_number = ?",
-                (book_id, chapter_number)
+                (book_id, chapter_number),
             )
-            return cursor.fetchone()
+            row: sqlite3.Row | None = cursor.fetchone()
+            return row
 
-    def get_next_pending_chapter(self) -> Optional[sqlite3.Row]:
+    def get_next_pending_chapter(self) -> sqlite3.Row | None:
         """
         Get the next pending chapter across all books.
         Prioritizes the earliest created book, and its earliest chapter.
         """
         with self._get_conn() as conn:
             cursor = conn.execute("""
-                SELECT c.*, b.voice, b.output_format, b.metadata_json 
+                SELECT c.*, b.voice, b.output_format, b.metadata_json
                 FROM chapters c
                 JOIN books b ON c.book_id = b.id
                 WHERE c.status = 'pending' AND b.status IN ('queued', 'processing')
                 ORDER BY b.created_at ASC, c.chapter_number ASC
                 LIMIT 1
             """)
-            return cursor.fetchone()
+            row: sqlite3.Row | None = cursor.fetchone()
+            return row
 
     def mark_chapter_processing(self, chapter_id: int, book_id: str) -> None:
         """Mark a chapter as processing, and update book status if needed."""
@@ -212,25 +207,27 @@ class BookRepository:
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE chapters SET status = 'processing', started_at = ? WHERE id = ?",
-                (now, chapter_id)
+                (now, chapter_id),
             )
             conn.execute(
                 "UPDATE books SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'queued'",
-                (now, book_id)
+                (now, book_id),
             )
             conn.commit()
 
-    def mark_chapter_completed(self, chapter_id: int, audio_path: str, duration_secs: float) -> None:
+    def mark_chapter_completed(
+        self, chapter_id: int, audio_path: str, duration_secs: float
+    ) -> None:
         """Mark a chapter as completed with its audio path."""
         now = datetime.utcnow().isoformat()
         with self._get_conn() as conn:
             conn.execute(
                 """
-                UPDATE chapters 
-                SET status = 'completed', audio_path = ?, duration_secs = ?, completed_at = ? 
+                UPDATE chapters
+                SET status = 'completed', audio_path = ?, duration_secs = ?, completed_at = ?
                 WHERE id = ?
                 """,
-                (audio_path, duration_secs, now, chapter_id)
+                (audio_path, duration_secs, now, chapter_id),
             )
             conn.commit()
 
@@ -241,20 +238,20 @@ class BookRepository:
             if retry:
                 conn.execute(
                     """
-                    UPDATE chapters 
-                    SET status = 'pending', error = ?, retry_count = retry_count + 1 
+                    UPDATE chapters
+                    SET status = 'pending', error = ?, retry_count = retry_count + 1
                     WHERE id = ?
                     """,
-                    (error, chapter_id)
+                    (error, chapter_id),
                 )
             else:
                 conn.execute(
                     """
-                    UPDATE chapters 
-                    SET status = 'failed', error = ?, completed_at = ? 
+                    UPDATE chapters
+                    SET status = 'failed', error = ?, completed_at = ?
                     WHERE id = ?
                     """,
-                    (error, now, chapter_id)
+                    (error, now, chapter_id),
                 )
             conn.commit()
 
@@ -263,22 +260,22 @@ class BookRepository:
         with self._get_conn() as conn:
             cursor = conn.execute(
                 "SELECT status, COUNT(*) as count FROM chapters WHERE book_id = ? GROUP BY status",
-                (book_id,)
+                (book_id,),
             )
             counts = {row["status"]: row["count"] for row in cursor.fetchall()}
-            
+
             pending = counts.get("pending", 0)
             processing = counts.get("processing", 0)
             failed = counts.get("failed", 0)
-            
+
             now = datetime.utcnow().isoformat()
-            
+
             if pending == 0 and processing == 0:
                 # Book is finished
                 new_status = "failed" if failed > 0 else "completed"
                 conn.execute(
                     "UPDATE books SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?",
-                    (new_status, now, now, book_id)
+                    (new_status, now, now, book_id),
                 )
                 conn.commit()
 
@@ -288,11 +285,11 @@ class BookRepository:
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE books SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('queued', 'processing')",
-                (now, book_id)
+                (now, book_id),
             )
             conn.execute(
                 "UPDATE chapters SET status = 'failed', error = 'Cancelled by user' WHERE book_id = ? AND status IN ('pending', 'processing')",
-                (book_id,)
+                (book_id,),
             )
             conn.commit()
 
@@ -302,11 +299,11 @@ class BookRepository:
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE chapters SET status = 'pending', error = NULL WHERE book_id = ? AND status = 'failed'",
-                (book_id,)
+                (book_id,),
             )
             conn.execute(
                 "UPDATE books SET status = 'processing', updated_at = ? WHERE id = ?",
-                (now, book_id)
+                (now, book_id),
             )
             conn.commit()
 
@@ -316,7 +313,9 @@ class BookRepository:
         Returns the number of chapters reset.
         """
         with self._get_conn() as conn:
-            cursor = conn.execute("UPDATE chapters SET status = 'pending' WHERE status = 'processing'")
+            cursor = conn.execute(
+                "UPDATE chapters SET status = 'pending' WHERE status = 'processing'"
+            )
             # Also ensure any 'processing' books are fine.
             conn.commit()
             return cursor.rowcount

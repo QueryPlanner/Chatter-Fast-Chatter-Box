@@ -2,13 +2,13 @@
 Text-to-speech synthesis endpoint.
 """
 
-import io
 import tempfile
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, status, Form, File, UploadFile
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
-from app.core.tts import get_model, is_ready, generate_speech
+from app.core.tts import generate_speech, is_ready
 from app.core.voices import get_voice_library
 
 router = APIRouter(tags=["speech"])
@@ -35,7 +35,9 @@ async def synthesize(
     max_sentences_per_chunk: int = Form(5, description="Max sentences per chunk"),
     max_chunk_chars: int = Form(320, description="Max characters per chunk"),
     chunk_gap_ms: int = Form(120, description="Gap between chunks in ms"),
-    reference_audio: UploadFile = File(None, description="Optional reference audio for voice cloning"),
+    reference_audio: UploadFile = File(
+        None, description="Optional reference audio for voice cloning"
+    ),
 ) -> Response:
     """
     Generate speech from text.
@@ -51,10 +53,12 @@ async def synthesize(
     if not is_ready():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": {
-                "message": "Model is still initializing. Please try again in a moment.",
-                "type": "model_not_ready",
-            }},
+            detail={
+                "error": {
+                    "message": "Model is still initializing. Please try again in a moment.",
+                    "type": "model_not_ready",
+                }
+            },
         )
 
     # Validate output format
@@ -62,10 +66,12 @@ async def synthesize(
     if output_format not in ("mp3", "wav"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {
-                "message": "output_format must be 'mp3' or 'wav'",
-                "type": "invalid_format",
-            }},
+            detail={
+                "error": {
+                    "message": "output_format must be 'mp3' or 'wav'",
+                    "type": "invalid_format",
+                }
+            },
         )
 
     # Determine reference audio path
@@ -89,10 +95,12 @@ async def synthesize(
         if voice_path is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {
-                    "message": f"Voice '{voice}' not found in voice library",
-                    "type": "voice_not_found",
-                }},
+                detail={
+                    "error": {
+                        "message": f"Voice '{voice}' not found in voice library",
+                        "type": "voice_not_found",
+                    }
+                },
             )
 
         reference_audio_path = voice_path
@@ -127,13 +135,19 @@ async def synthesize(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {
-                "message": f"Failed to generate speech: {str(e)}",
-                "type": "generation_error",
-            }},
-        )
+            detail={
+                "error": {
+                    "message": f"Failed to generate speech: {str(e)}",
+                    "type": "generation_error",
+                }
+            },
+        ) from e
 
     finally:
         # Clean up temp file if created
-        if reference_audio is not None and reference_audio_path and reference_audio_path.startswith("/tmp"):
+        if (
+            reference_audio is not None
+            and reference_audio_path
+            and reference_audio_path.startswith("/tmp")
+        ):
             Path(reference_audio_path).unlink(missing_ok=True)

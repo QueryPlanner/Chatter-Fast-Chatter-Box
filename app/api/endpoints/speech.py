@@ -32,6 +32,7 @@ async def synthesize(
     text: str = Form(..., description="Text to synthesize", min_length=1, max_length=10000),
     voice: str = Form(None, description="Voice name or alias"),
     output_format: str = Form("mp3", description="Output format: mp3 or wav"),
+    max_sentences_per_chunk: int = Form(5, description="Max sentences per chunk"),
     max_chunk_chars: int = Form(320, description="Max characters per chunk"),
     chunk_gap_ms: int = Form(120, description="Gap between chunks in ms"),
     reference_audio: UploadFile = File(None, description="Optional reference audio for voice cloning"),
@@ -109,6 +110,7 @@ async def synthesize(
         audio_bytes, content_type = generate_speech(
             text=text,
             reference_audio_path=reference_audio_path,
+            max_sentences_per_chunk=max_sentences_per_chunk,
             max_chunk_chars=max_chunk_chars,
             chunk_gap_ms=chunk_gap_ms,
             output_format=output_format,

@@ -19,6 +19,8 @@ from app.config import Config
 from app.api.router import api_router
 from app.core.tts import initialize_model, get_model, get_initialization_error
 from app.core.voices import get_voice_library
+from app.core.database import init_db, BookRepository
+from app.core.worker import book_worker_loop
 
 
 # ASCII art banner
@@ -63,6 +65,21 @@ async def lifespan(app: FastAPI):
     print("Starting model initialization...")
     model_init_task = asyncio.create_task(initialize_model(Config.DEVICE))
 
+    # Initialize Database
+    print("Initializing SQLite database...")
+    init_db()
+
+    # Crash recovery for books
+    print("Running crash recovery for jobs...")
+    repo = BookRepository()
+    reset_count = repo.reset_processing_chapters()
+    if reset_count > 0:
+        print(f"  - Reset {reset_count} chapters from 'processing' to 'pending'")
+
+    # Start book worker
+    print("Starting background book worker...")
+    worker_task = asyncio.create_task(book_worker_loop())
+
     # Yield control to the application
     yield
 
@@ -74,6 +91,14 @@ async def lifespan(app: FastAPI):
         model_init_task.cancel()
         try:
             await model_init_task
+        except asyncio.CancelledError:
+            pass
+
+    # Cancel worker task
+    if not worker_task.done():
+        worker_task.cancel()
+        try:
+            await worker_task
         except asyncio.CancelledError:
             pass
 

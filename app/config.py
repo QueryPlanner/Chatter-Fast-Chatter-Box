@@ -35,6 +35,11 @@ class Config:
     # Output format
     DEFAULT_OUTPUT_FORMAT: str = os.getenv("DEFAULT_OUTPUT_FORMAT", "mp3")
 
+    # Database and Background worker
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/jobs.db")
+    WORKER_POLL_INTERVAL: int = int(os.getenv("WORKER_POLL_INTERVAL", "2"))
+    MAX_CHAPTER_RETRIES: int = int(os.getenv("MAX_CHAPTER_RETRIES", "3"))
+
     @classmethod
     def validate(cls) -> None:
         """Validate configuration values."""

@@ -43,7 +43,11 @@ models/
 # Generated audio files (keep directory)
 outputs/*.wav
 outputs/*.mp3
+outputs/books/
 !outputs/.gitkeep
+
+# Database
+data/
 
 # UV
 .uv/

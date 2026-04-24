@@ -107,6 +107,7 @@ def is_ready() -> bool:
 def generate_speech(
     text: str,
     reference_audio_path: Optional[str] = None,
+    max_sentences_per_chunk: int = 5,
     max_chunk_chars: int = 320,
     chunk_gap_ms: int = 120,
     output_format: str = "mp3",
@@ -123,6 +124,7 @@ def generate_speech(
     Args:
         text: Input text to synthesize
         reference_audio_path: Optional path to reference audio for voice cloning
+        max_sentences_per_chunk: Maximum sentences per chunk
         max_chunk_chars: Maximum characters per chunk
         chunk_gap_ms: Gap between chunks in milliseconds
         output_format: "mp3" or "wav"
@@ -137,7 +139,7 @@ def generate_speech(
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
     # Split text into chunks
-    chunks = split_text_into_chunks(text, max_chunk_chars)
+    chunks = split_text_into_chunks(text, max_sentences_per_chunk=max_sentences_per_chunk, max_chunk_chars=max_chunk_chars)
 
     print(f"Synthesizing {len(text)} characters in {len(chunks)} chunk(s) ...")
 

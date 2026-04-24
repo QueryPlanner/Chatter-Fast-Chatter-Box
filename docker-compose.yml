@@ -6,6 +6,7 @@ services:
     volumes:
       - ./voices:/app/voices
       - ./outputs:/app/outputs
+      - ./data:/app/data
     environment:
       - HOST=0.0.0.0
       - PORT=8000

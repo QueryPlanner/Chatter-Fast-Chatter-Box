@@ -87,16 +87,26 @@ For a Mac you use daily, you can install Fast-Chatterbox as a permanent, auto-st
    ```bash
    bash scripts/install-launchd.sh
    ```
+   If that prints **`Bootstrap failed: 5`**, the plist could not be registered in the system domain (common when the clone lives under **iCloud Drive** / cloud-synced `Documents`, or a launchd quirk on some setups). Do one of: move the repo to a path like `~/dev/Chatter-Fast-Chatter-Box` on a local APFS volume, or install the per-user service instead (no `sudo`):
+   ```bash
+   bash scripts/uninstall-launchd.sh
+   bash scripts/install-launchagent.sh
+   ```
+   A user LaunchAgent starts at login and avoids `/Library/LaunchDaemons/`.
 
-The API is now running at `http://localhost:8000` and will automatically start when your Mac boots. Check health with `curl http://localhost:8000/health` (expect `"device": "mps"` on Apple Silicon).
+The API is now running at `http://localhost:8000` and will automatically start when your Mac boots (or at login, if you used `install-launchagent.sh`). Check health with `curl http://localhost:8000/health` (expect `"device": "mps"` on Apple Silicon).
 
 **Managing the Service:**
 
 - **View Logs:** `tail -f ~/Library/Logs/fast-chatterbox/stdout.log ~/Library/Logs/fast-chatterbox/stderr.log`
-- **Check Status:** `sudo launchctl print system/com.fastchatterbox.server | head`
-- **Restart:** `sudo launchctl kickstart -k system/com.fastchatterbox.server`
-- **Stop (until reboot):** `sudo launchctl bootout system/com.fastchatterbox.server`
-- **Uninstall completely:** `bash scripts/uninstall-launchd.sh`
+- **Check Status (LaunchDaemon):** `sudo launchctl print system/com.fastchatterbox.server | head`
+- **Check Status (LaunchAgent):** `launchctl print gui/$(id -u)/com.fastchatterbox.server | head`
+- **Restart (LaunchDaemon):** `sudo launchctl kickstart -k system/com.fastchatterbox.server`
+- **Restart (LaunchAgent):** `launchctl kickstart -k gui/$(id -u)/com.fastchatterbox.server`
+- **Stop (LaunchDaemon, until next boot):** `sudo launchctl bootout system/com.fastchatterbox.server`
+- **Stop (LaunchAgent):** `launchctl bootout gui/$(id -u)/com.fastchatterbox.server`
+- **Uninstall completely (LaunchDaemon):** `bash scripts/uninstall-launchd.sh`
+- **Uninstall LaunchAgent only:** `bash scripts/uninstall-launchagent.sh`
 
 *(Note: For local development with hot-reload instead of the background daemon, run `bash scripts/dev.sh`)*
 

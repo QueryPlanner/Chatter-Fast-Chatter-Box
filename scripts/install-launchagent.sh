@@ -91,7 +91,7 @@ echo "Installing LaunchAgent to ${INSTALLED_PLIST} (no sudo)..."
 
 # Stop a prior user registration, and try to stop the system daemon if it exists (ignores if none).
 launchctl bootout "${GUI_DOMAIN}" 2>/dev/null || true
-sudo launchctl bootout "system/${LABEL}" 2>/dev/null || true
+sudo -n launchctl bootout "system/${LABEL}" 2>/dev/null || true
 
 cp "${RENDERED}" "${INSTALLED_PLIST}"
 chmod 644 "${INSTALLED_PLIST}"

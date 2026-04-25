@@ -4,10 +4,6 @@
 <dict>
 	<key>Label</key>
 	<string>com.fastchatterbox.server</string>
-	<key>UserName</key>
-	<string>@USER_NAME@</string>
-	<key>GroupName</key>
-	<string>@GROUP_NAME@</string>
 	<key>WorkingDirectory</key>
 	<string>@REPO_DIR@</string>
 	<key>ProgramArguments</key>

@@ -17,9 +17,9 @@ load_dotenv()
 def _logical_cpu_count() -> int:
     """Usable CPU count (respects Linux cgroup/affinity in containers when available)."""
     if hasattr(os, "sched_getaffinity"):
-        try:
+        try:  # pragma: no cover — Linux-only; not present on macOS/Windows
             return max(1, len(os.sched_getaffinity(0)))
-        except (OSError, NotImplementedError, ValueError, RuntimeError):
+        except (OSError, NotImplementedError, ValueError, RuntimeError):  # pragma: no cover
             pass
     return max(1, os.cpu_count() or 4)
 

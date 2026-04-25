@@ -37,8 +37,8 @@ Thumbs.db
 .env
 .env.local
 
-# Model cache
-models/
+# Model cache (repo root only; do not use bare "models/" — it ignores app/models/)
+/models/
 
 # Generated audio files (keep directory)
 outputs/*.wav

@@ -250,3 +250,17 @@ class TestGenerateSpeech:
                         mock_to_bytes.assert_called_once()
                         call_args = mock_to_bytes.call_args
                         assert call_args[0][2] == "wav"
+
+
+class TestApplyCpuThreadingBudget:
+    """Cover PyTorch thread-setter edge cases on CPU init."""
+
+    def test_handles_set_interop_and_intraop_errors(self):
+        from app.core.tts import _apply_cpu_threading_budget
+
+        with patch("app.core.tts.torch.set_num_interop_threads", side_effect=RuntimeError("already set")):
+            with patch("app.core.tts.torch.set_num_threads", side_effect=ValueError("bad")):
+                with patch("app.core.tts.logger") as mock_log:
+                    _apply_cpu_threading_budget()
+        mock_log.debug.assert_called()
+        mock_log.warning.assert_called()

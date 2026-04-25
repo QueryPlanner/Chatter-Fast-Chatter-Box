@@ -131,3 +131,32 @@ class TestConfig:
         monkeypatch.delenv("MAX_CHUNK_CHARS")
         monkeypatch.delenv("TORCH_NUM_THREADS")
         importlib.reload(app.config)
+
+    def test_reload_torch_num_threads_empty_string_uses_cpu_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Blank TORCH_NUM_THREADS after strip falls back to logical CPU count."""
+        import importlib
+
+        import app.config
+
+        monkeypatch.setenv("TORCH_NUM_THREADS", "   ")
+        importlib.reload(app.config)
+        assert 1 <= app.config.Config.TORCH_NUM_THREADS <= 256
+        monkeypatch.delenv("TORCH_NUM_THREADS", raising=False)
+        importlib.reload(app.config)
+
+    def test_reload_torch_num_threads_non_numeric_uses_cpu_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Invalid TORCH_NUM_THREADS value falls back to logical CPU count."""
+        import importlib
+
+        import app.config
+
+        monkeypatch.setenv("TORCH_NUM_THREADS", "not-a-number")
+        importlib.reload(app.config)
+        assert 1 <= app.config.Config.TORCH_NUM_THREADS <= 256
+        monkeypatch.delenv("TORCH_NUM_THREADS", raising=False)
+        importlib.reload(app.config)
+

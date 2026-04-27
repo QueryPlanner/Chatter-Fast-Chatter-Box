@@ -409,3 +409,32 @@ class BookRepository:
             if row and row["total"] > 0:
                 return int(row["completed"]), int(row["total"])
             return 0, 0
+
+    def get_chunk_progress_for_book(self, book_id: str) -> dict[int, tuple[int, int]]:
+        """
+        Fetch chunk progress for all chapters in a book in a single query.
+
+        Returns:
+            Dict mapping chapter_id -> (completed_chunks, total_chunks)
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                SELECT
+                    c.id as chapter_id,
+                    COUNT(cs.id) as total,
+                    SUM(CASE WHEN cs.status = 'completed' THEN 1 ELSE 0 END) as completed
+                FROM chapters c
+                LEFT JOIN chunk_segments cs ON c.id = cs.chapter_id
+                WHERE c.book_id = ?
+                GROUP BY c.id
+                """,
+                (book_id,),
+            )
+            result: dict[int, tuple[int, int]] = {}
+            for row in cursor.fetchall():
+                chapter_id = row["chapter_id"]
+                total = row["total"] or 0
+                completed = row["completed"] or 0
+                result[chapter_id] = (int(completed), int(total))
+            return result

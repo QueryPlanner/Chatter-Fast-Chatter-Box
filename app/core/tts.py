@@ -167,7 +167,7 @@ def get_sample_rate() -> int:
     """Get the model's sample rate."""
     if _model is None:
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
-    return _model.sr
+    return int(_model.sr)
 
 
 def generate_speech(

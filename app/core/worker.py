@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import shutil
 from pathlib import Path
 
 from app.config import Config
@@ -94,12 +93,12 @@ async def process_chapter(repo: BookRepository, chapter: dict) -> None:
     existing_segments = repo.get_chunk_segments(chapter_id)
 
     if not existing_segments:
-        # First run: create chunk_segments in DB
         repo.create_chunk_segments(chapter_id, chunks)
         logger.info(
             f"Created {len(chunks)} chunk segments for chapter {chapter_num} "
             f"(book {book_id})"
         )
+        existing_segments = repo.get_chunk_segments(chapter_id)
     else:
         completed_count = sum(1 for s in existing_segments if s["status"] == "completed")
         logger.info(
@@ -109,9 +108,14 @@ async def process_chapter(repo: BookRepository, chapter: dict) -> None:
 
     # ── 3. Generate pending chunks → disk → DB ───────────────────────
     chunks_dir = get_chunks_dir(book_id)
-    pending_segments = repo.get_pending_chunk_segments(chapter_id)
-    total_segments = repo.get_chunk_segments(chapter_id)
-    total_count = len(total_segments)
+    total_count = len(existing_segments)
+
+    pending_segments = [
+        seg
+        for seg in existing_segments
+        if seg["status"] != "completed"
+        or not (seg["audio_path"] and Path(seg["audio_path"]).exists())
+    ]
 
     logger.info(
         f"Synthesizing chapter {chapter_num}: "
@@ -137,7 +141,7 @@ async def process_chapter(repo: BookRepository, chapter: dict) -> None:
         # Run generation in executor to not block asyncio
         await loop.run_in_executor(
             None,
-            lambda cp=chunk_path, ct=chunk_text, rp=ref_path: generate_single_chunk(
+            lambda cp=chunk_path, ct=chunk_text, rp=ref_path: generate_single_chunk(  # type: ignore[misc]
                 text=ct,
                 output_path=cp,
                 reference_audio_path=rp,
@@ -148,8 +152,8 @@ async def process_chapter(repo: BookRepository, chapter: dict) -> None:
         repo.mark_chunk_segment_completed(seg["id"], chunk_path)
 
     # ── 4. Stitch all chunks into final chapter audio ────────────────
-    all_segments = repo.get_chunk_segments(chapter_id)
-    chunk_paths = [seg["audio_path"] for seg in all_segments if seg["audio_path"]]
+    updated_segments = repo.get_chunk_segments(chapter_id)
+    chunk_paths = [seg["audio_path"] for seg in updated_segments if seg["audio_path"]]
 
     if not chunk_paths:
         raise RuntimeError(f"No chunk audio files found for chapter {chapter_id}")

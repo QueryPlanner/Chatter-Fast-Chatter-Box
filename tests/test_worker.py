@@ -287,10 +287,14 @@ class TestProcessChapter:
         repo.mark_chapter_processing(chapter_row["id"], book_id)
         chapter_id = chapter_row["id"]
 
-        # Simulate a previous partial run: create chunk segments with one completed
+        chunks_dir = get_chunks_dir(book_id)
+        chunk_0_path = str(chunks_dir / "chapter_001_chunk_0000.wav")
+        Path(chunk_0_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(chunk_0_path).write_bytes(b"fake audio data")
+
         repo.create_chunk_segments(chapter_id, ["First sentence.", "Second sentence.", "Third sentence."])
         segments = repo.get_chunk_segments(chapter_id)
-        repo.mark_chunk_segment_completed(segments[0]["id"], "/fake/chunk_0.wav")
+        repo.mark_chunk_segment_completed(segments[0]["id"], chunk_0_path)
 
         chapter_dict = dict(chapter_row)
 
@@ -305,8 +309,47 @@ class TestProcessChapter:
 
             await process_chapter(repo, chapter_dict)
 
-            # Should only generate 2 chunks (skipping the already-completed first one)
             assert mock_gen_chunk.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_chapter_missing_file_regenerates(
+        self, temp_db: Path, temp_output_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test that chunks with missing files are regenerated."""
+        monkeypatch.chdir(temp_output_dir)
+
+        repo = BookRepository()
+        book_id = repo.create_book(
+            title="Test Book",
+            voice=None,
+            output_format="mp3",
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "First. Second. Third."}],
+            metadata={"max_sentences_per_chunk": 1},
+        )
+
+        chapter_row = repo.get_next_pending_chapter()
+        repo.mark_chapter_processing(chapter_row["id"], book_id)
+        chapter_id = chapter_row["id"]
+
+        repo.create_chunk_segments(chapter_id, ["First.", "Second.", "Third."])
+        segments = repo.get_chunk_segments(chapter_id)
+        repo.mark_chunk_segment_completed(segments[0]["id"], "/nonexistent/chunk_0.wav")
+        repo.mark_chunk_segment_completed(segments[1]["id"], "/nonexistent/chunk_1.wav")
+
+        chapter_dict = dict(chapter_row)
+
+        with (
+            patch("app.core.worker.generate_single_chunk") as mock_gen_chunk,
+            patch("app.core.worker.get_sample_rate", return_value=24000),
+            patch("app.core.worker.stitch_chunk_files"),
+            patch("app.core.worker.get_voice_library") as mock_voice_lib,
+        ):
+            mock_voice_lib.return_value.get_voice_path.return_value = None
+            mock_voice_lib.return_value.get_default_voice.return_value = None
+
+            await process_chapter(repo, chapter_dict)
+
+            assert mock_gen_chunk.call_count == 3
 
 
 class TestBookWorkerLoop:

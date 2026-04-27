@@ -330,3 +330,54 @@ class TestStitchChunkFiles:
             assert Path(output_path).exists()
             with open(output_path, "rb") as f:
                 assert f.read() == b"MP3_DATA"
+
+    def test_batch_processing(self, tmp_path):
+        """Test stitching with batch processing for memory efficiency."""
+        chunk_paths = []
+        for i in range(25):
+            path = str(tmp_path / f"chunk_{i}.wav")
+            self._create_chunk_wav(path, samples=1000)
+            chunk_paths.append(path)
+
+        output_path = str(tmp_path / "out.wav")
+
+        stitch_chunk_files(
+            chunk_paths=chunk_paths,
+            output_path=output_path,
+            sample_rate=24000,
+            gap_ms=0,
+            output_format="wav",
+            batch_size=10,
+        )
+
+        import torchaudio as ta
+
+        audio, sr = ta.load(output_path)
+        assert sr == 24000
+        assert audio.shape[1] == 25 * 1000
+
+    def test_batch_processing_with_gaps(self, tmp_path):
+        """Test batch stitching preserves correct gaps between chunks."""
+        chunk_paths = []
+        for i in range(5):
+            path = str(tmp_path / f"chunk_{i}.wav")
+            self._create_chunk_wav(path, samples=1000)
+            chunk_paths.append(path)
+
+        output_path = str(tmp_path / "out.wav")
+
+        stitch_chunk_files(
+            chunk_paths=chunk_paths,
+            output_path=output_path,
+            sample_rate=24000,
+            gap_ms=100,
+            output_format="wav",
+            batch_size=2,
+        )
+
+        import torchaudio as ta
+
+        audio, sr = ta.load(output_path)
+        gap_samples = int(24000 * 0.1)
+        expected_length = 5 * 1000 + 4 * gap_samples
+        assert audio.shape[1] == expected_length

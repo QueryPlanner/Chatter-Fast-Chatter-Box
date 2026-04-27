@@ -100,6 +100,7 @@ async def get_book(book_id: str) -> BookResponse:
 
     for ch in chapters_data:
         counts[ch["status"]] = counts.get(ch["status"], 0) + 1
+        completed_chunks, total_chunks = repo.get_chunk_progress(ch["id"])
         chapters.append(
             ChapterStatus(
                 chapter_number=ch["chapter_number"],
@@ -108,6 +109,8 @@ async def get_book(book_id: str) -> BookResponse:
                 duration_secs=ch["duration_secs"],
                 error=ch["error"],
                 retry_count=ch["retry_count"],
+                completed_chunks=completed_chunks,
+                total_chunks=total_chunks,
             )
         )
 

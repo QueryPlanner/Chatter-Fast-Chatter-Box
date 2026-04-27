@@ -10,10 +10,12 @@ import pytest
 import torch
 
 from app.core.tts import (
+    generate_single_chunk,
     generate_speech,
     get_device,
     get_initialization_error,
     get_model,
+    get_sample_rate,
     initialize_model,
     is_ready,
     resolve_device,
@@ -166,6 +168,70 @@ class TestIsReady:
             assert is_ready() is True
 
 
+class TestGetSampleRate:
+    """Tests for get_sample_rate function."""
+
+    def test_model_not_initialized(self):
+        """Test error when model not initialized."""
+        with patch("app.core.tts._model", None):
+            with pytest.raises(RuntimeError, match="Model not initialized"):
+                get_sample_rate()
+
+    def test_returns_sample_rate(self):
+        """Test returns model sample rate."""
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        with patch("app.core.tts._model", mock_model):
+            assert get_sample_rate() == 24000
+
+
+class TestGenerateSingleChunk:
+    """Tests for generate_single_chunk function."""
+
+    def test_model_not_initialized(self):
+        """Test error when model not initialized."""
+        with patch("app.core.tts._model", None):
+            with pytest.raises(RuntimeError, match="Model not initialized"):
+                generate_single_chunk("test", "/tmp/out.wav")
+
+    def test_generates_and_writes_wav(self, tmp_path):
+        """Test that single chunk generates audio and writes to disk."""
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.generate = MagicMock(return_value=torch.randn(1, 24000))
+
+        output_path = str(tmp_path / "chunk.wav")
+
+        with patch("app.core.tts._model", mock_model):
+            with patch("app.core.tts.ta") as mock_ta:
+                generate_single_chunk("Hello world.", output_path)
+
+                mock_model.generate.assert_called_once_with("Hello world.")
+                mock_ta.save.assert_called_once()
+                call_args = mock_ta.save.call_args
+                assert call_args[0][0] == output_path
+                assert call_args[0][2] == 24000
+
+    def test_generates_with_reference_audio(self, tmp_path):
+        """Test generation with reference audio path."""
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.generate = MagicMock(return_value=torch.randn(1, 24000))
+
+        output_path = str(tmp_path / "chunk.wav")
+
+        with patch("app.core.tts._model", mock_model):
+            with patch("app.core.tts.ta"):
+                generate_single_chunk(
+                    "Hello world.",
+                    output_path,
+                    reference_audio_path="/path/to/voice.wav",
+                )
+
+                call_kwargs = mock_model.generate.call_args[1]
+                assert call_kwargs["audio_prompt_path"] == "/path/to/voice.wav"
+
+
 class TestGenerateSpeech:
     """Tests for generate_speech function."""
 
@@ -179,77 +245,90 @@ class TestGenerateSpeech:
         """Test generation without reference audio."""
         mock_model = MagicMock()
         mock_model.sr = 24000
-        mock_model.generate = MagicMock(return_value=torch.randn(1, 24000))
 
         with patch("app.core.tts._model", mock_model):
             with patch("app.core.tts.split_text_into_chunks") as mock_split:
-                with patch("app.core.tts.concatenate_with_gap") as mock_concat:
-                    with patch("app.core.tts.tensor_to_audio_bytes") as mock_to_bytes:
+                with patch("app.core.tts.generate_single_chunk") as mock_gen_chunk:
+                    with patch("app.core.tts.stitch_chunk_files") as mock_stitch:
                         mock_split.return_value = ["chunk1"]
-                        mock_concat.return_value = torch.randn(1, 24000)
-                        mock_to_bytes.return_value = (b"audio_data", "audio/mpeg")
+
+                        # Mock stitch to create the output file
+                        def fake_stitch(**kwargs):
+                            with open(kwargs["output_path"], "wb") as f:
+                                f.write(b"audio_data")
+
+                        mock_stitch.side_effect = fake_stitch
 
                         result = generate_speech("test text")
 
                         assert result == (b"audio_data", "audio/mpeg")
-                        mock_model.generate.assert_called_once()
+                        mock_gen_chunk.assert_called_once()
 
     def test_generate_with_reference(self):
         """Test generation with reference audio."""
         mock_model = MagicMock()
         mock_model.sr = 24000
-        mock_model.generate = MagicMock(return_value=torch.randn(1, 24000))
 
         with patch("app.core.tts._model", mock_model):
             with patch("app.core.tts.split_text_into_chunks") as mock_split:
-                with patch("app.core.tts.concatenate_with_gap") as mock_concat:
-                    with patch("app.core.tts.tensor_to_audio_bytes") as mock_to_bytes:
+                with patch("app.core.tts.generate_single_chunk") as mock_gen_chunk:
+                    with patch("app.core.tts.stitch_chunk_files") as mock_stitch:
                         mock_split.return_value = ["chunk1"]
-                        mock_concat.return_value = torch.randn(1, 24000)
-                        mock_to_bytes.return_value = (b"audio_data", "audio/mpeg")
+
+                        def fake_stitch(**kwargs):
+                            with open(kwargs["output_path"], "wb") as f:
+                                f.write(b"audio_data")
+
+                        mock_stitch.side_effect = fake_stitch
 
                         generate_speech("test text", reference_audio_path="/path/to/voice.wav")
 
-                        call_kwargs = mock_model.generate.call_args[1]
-                        assert call_kwargs.get("audio_prompt_path") == "/path/to/voice.wav"
+                        call_kwargs = mock_gen_chunk.call_args[1]
+                        assert call_kwargs["reference_audio_path"] == "/path/to/voice.wav"
 
     def test_generate_multiple_chunks(self):
         """Test generation with multiple chunks."""
         mock_model = MagicMock()
         mock_model.sr = 24000
-        mock_model.generate = MagicMock(return_value=torch.randn(1, 24000))
 
         with patch("app.core.tts._model", mock_model):
             with patch("app.core.tts.split_text_into_chunks") as mock_split:
-                with patch("app.core.tts.concatenate_with_gap") as mock_concat:
-                    with patch("app.core.tts.tensor_to_audio_bytes") as mock_to_bytes:
+                with patch("app.core.tts.generate_single_chunk") as mock_gen_chunk:
+                    with patch("app.core.tts.stitch_chunk_files") as mock_stitch:
                         mock_split.return_value = ["chunk1", "chunk2", "chunk3"]
-                        mock_concat.return_value = torch.randn(1, 72000)
-                        mock_to_bytes.return_value = (b"audio_data", "audio/mpeg")
+
+                        def fake_stitch(**kwargs):
+                            with open(kwargs["output_path"], "wb") as f:
+                                f.write(b"audio_data")
+
+                        mock_stitch.side_effect = fake_stitch
 
                         generate_speech("test text", reference_audio_path="/voice.wav")
 
-                        assert mock_model.generate.call_count == 3
+                        assert mock_gen_chunk.call_count == 3
 
-    def test_generate_custom_output_format(self):
-        """Test generation with custom output format."""
+    def test_generate_wav_output(self):
+        """Test generation with WAV output format."""
         mock_model = MagicMock()
         mock_model.sr = 24000
-        mock_model.generate = MagicMock(return_value=torch.randn(1, 24000))
 
         with patch("app.core.tts._model", mock_model):
             with patch("app.core.tts.split_text_into_chunks") as mock_split:
-                with patch("app.core.tts.concatenate_with_gap") as mock_concat:
-                    with patch("app.core.tts.tensor_to_audio_bytes") as mock_to_bytes:
+                with patch("app.core.tts.generate_single_chunk"):
+                    with patch("app.core.tts.stitch_chunk_files") as mock_stitch:
                         mock_split.return_value = ["chunk1"]
-                        mock_concat.return_value = torch.randn(1, 24000)
-                        mock_to_bytes.return_value = (b"wav_data", "audio/wav")
 
-                        generate_speech("test text", output_format="wav")
+                        def fake_stitch(**kwargs):
+                            with open(kwargs["output_path"], "wb") as f:
+                                f.write(b"wav_data")
 
-                        mock_to_bytes.assert_called_once()
-                        call_args = mock_to_bytes.call_args
-                        assert call_args[0][2] == "wav"
+                        mock_stitch.side_effect = fake_stitch
+
+                        result = generate_speech("test text", output_format="wav")
+
+                        assert result == (b"wav_data", "audio/wav")
+                        call_kwargs = mock_stitch.call_args[1]
+                        assert call_kwargs["output_format"] == "wav"
 
 
 class TestApplyCpuThreadingBudget:

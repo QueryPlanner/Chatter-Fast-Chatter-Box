@@ -15,6 +15,7 @@ from app.core.worker import (
     PermanentChapterError,
     book_worker_loop,
     get_book_output_dir,
+    get_chunks_dir,
     process_chapter,
 )
 
@@ -33,6 +34,20 @@ class TestGetBookOutputDir:
         assert output_dir.parent.name == "books"
 
 
+class TestGetChunksDir:
+    """Tests for get_chunks_dir function."""
+
+    def test_creates_directory(self, temp_output_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        """Test that chunks directory is created."""
+        monkeypatch.chdir(temp_output_dir)
+
+        chunks_dir = get_chunks_dir("test-book-id")
+
+        assert chunks_dir.exists()
+        assert chunks_dir.name == "chunks"
+        assert chunks_dir.parent.name == "test-book-id"
+
+
 class TestProcessChapter:
     """Tests for process_chapter function."""
 
@@ -48,7 +63,7 @@ class TestProcessChapter:
             title="Test Book",
             voice=None,
             output_format="mp3",
-            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text"}],
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text."}],
             metadata={},
         )
 
@@ -58,11 +73,11 @@ class TestProcessChapter:
         chapter_dict = dict(chapter_row)
 
         with (
-            patch("app.core.worker.generate_speech") as mock_gen,
-            patch("app.core.worker.is_ready", return_value=True),
+            patch("app.core.worker.generate_single_chunk") as mock_gen_chunk,
+            patch("app.core.worker.get_sample_rate", return_value=24000),
+            patch("app.core.worker.stitch_chunk_files") as mock_stitch,
             patch("app.core.worker.get_voice_library") as mock_voice_lib,
         ):
-            mock_gen.return_value = (b"audio_data", "audio/mpeg")
             mock_voice_lib.return_value.get_voice_path.return_value = None
             mock_voice_lib.return_value.get_default_voice.return_value = None
 
@@ -84,7 +99,7 @@ class TestProcessChapter:
             title="Test Book",
             voice="test_voice",
             output_format="mp3",
-            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text"}],
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text."}],
             metadata={},
         )
 
@@ -94,17 +109,18 @@ class TestProcessChapter:
         chapter_dict = dict(chapter_row)
 
         with (
-            patch("app.core.worker.generate_speech") as mock_gen,
-            patch("app.core.worker.is_ready", return_value=True),
+            patch("app.core.worker.generate_single_chunk") as mock_gen_chunk,
+            patch("app.core.worker.get_sample_rate", return_value=24000),
+            patch("app.core.worker.stitch_chunk_files"),
             patch("app.core.worker.get_voice_library") as mock_voice_lib,
         ):
-            mock_gen.return_value = (b"audio_data", "audio/mpeg")
             mock_voice_lib.return_value.get_voice_path.return_value = "/path/to/voice.wav"
 
             await process_chapter(repo, chapter_dict)
 
-            call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["reference_audio_path"] == "/path/to/voice.wav"
+            # First chunk should have been called with reference audio
+            first_call_kwargs = mock_gen_chunk.call_args_list[0][1]
+            assert first_call_kwargs["reference_audio_path"] == "/path/to/voice.wav"
 
     @pytest.mark.asyncio
     async def test_process_chapter_voice_not_found(
@@ -118,7 +134,7 @@ class TestProcessChapter:
             title="Test Book",
             voice="nonexistent_voice",
             output_format="mp3",
-            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text"}],
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text."}],
             metadata={},
         )
 
@@ -148,7 +164,7 @@ class TestProcessChapter:
             title="Test Book",
             voice=None,
             output_format="wav",
-            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text"}],
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text."}],
             metadata={
                 "max_sentences_per_chunk": 10,
                 "max_chunk_chars": 500,
@@ -162,20 +178,19 @@ class TestProcessChapter:
         chapter_dict = dict(chapter_row)
 
         with (
-            patch("app.core.worker.generate_speech") as mock_gen,
-            patch("app.core.worker.is_ready", return_value=True),
+            patch("app.core.worker.generate_single_chunk"),
+            patch("app.core.worker.get_sample_rate", return_value=24000),
+            patch("app.core.worker.stitch_chunk_files") as mock_stitch,
             patch("app.core.worker.get_voice_library") as mock_voice_lib,
         ):
-            mock_gen.return_value = (b"audio_data", "audio/wav")
             mock_voice_lib.return_value.get_voice_path.return_value = None
             mock_voice_lib.return_value.get_default_voice.return_value = None
 
             await process_chapter(repo, chapter_dict)
 
-            call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["max_sentences_per_chunk"] == 10
-            assert call_kwargs["max_chunk_chars"] == 500
-            assert call_kwargs["chunk_gap_ms"] == 200
+            stitch_kwargs = mock_stitch.call_args[1]
+            assert stitch_kwargs["gap_ms"] == 200
+            assert stitch_kwargs["output_format"] == "wav"
 
     @pytest.mark.asyncio
     async def test_process_chapter_empty_metadata_json(
@@ -189,7 +204,7 @@ class TestProcessChapter:
             title="Test Book",
             voice=None,
             output_format="mp3",
-            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text"}],
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text."}],
             metadata={},
         )
 
@@ -203,18 +218,18 @@ class TestProcessChapter:
         chapter_dict = dict(chapter_row)
 
         with (
-            patch("app.core.worker.generate_speech") as mock_gen,
-            patch("app.core.worker.is_ready", return_value=True),
+            patch("app.core.worker.generate_single_chunk"),
+            patch("app.core.worker.get_sample_rate", return_value=24000),
+            patch("app.core.worker.stitch_chunk_files"),
             patch("app.core.worker.get_voice_library") as mock_voice_lib,
         ):
-            mock_gen.return_value = (b"audio_data", "audio/mpeg")
             mock_voice_lib.return_value.get_voice_path.return_value = None
             mock_voice_lib.return_value.get_default_voice.return_value = None
 
             await process_chapter(repo, chapter_dict)
 
-            call_kwargs = mock_gen.call_args[1]
-            assert call_kwargs["max_sentences_per_chunk"] == 3
+        updated = repo.get_chapter(book_id, 1)
+        assert updated["status"] == "completed"
 
     @pytest.mark.asyncio
     async def test_process_chapter_default_voice_none(
@@ -228,7 +243,7 @@ class TestProcessChapter:
             title="Test Book",
             voice=None,
             output_format="mp3",
-            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text"}],
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text."}],
             metadata={},
         )
 
@@ -238,18 +253,60 @@ class TestProcessChapter:
         chapter_dict = dict(chapter_row)
 
         with (
-            patch("app.core.worker.generate_speech") as mock_gen,
-            patch("app.core.worker.is_ready", return_value=True),
+            patch("app.core.worker.generate_single_chunk") as mock_gen_chunk,
+            patch("app.core.worker.get_sample_rate", return_value=24000),
+            patch("app.core.worker.stitch_chunk_files"),
             patch("app.core.worker.get_voice_library") as mock_voice_lib,
         ):
-            mock_gen.return_value = (b"audio_data", "audio/mpeg")
             mock_voice_lib.return_value.get_voice_path.return_value = None
             mock_voice_lib.return_value.get_default_voice.return_value = "missing_voice"
 
             await process_chapter(repo, chapter_dict)
 
-            call_kwargs = mock_gen.call_args[1]
+            # reference_audio_path should be None since get_voice_path returned None
+            call_kwargs = mock_gen_chunk.call_args[1]
             assert call_kwargs["reference_audio_path"] is None
+
+    @pytest.mark.asyncio
+    async def test_process_chapter_crash_resume(
+        self, temp_db: Path, temp_output_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test that process_chapter resumes from last completed chunk."""
+        monkeypatch.chdir(temp_output_dir)
+
+        repo = BookRepository()
+        book_id = repo.create_book(
+            title="Test Book",
+            voice=None,
+            output_format="mp3",
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "First sentence. Second sentence. Third sentence."}],
+            metadata={"max_sentences_per_chunk": 1},
+        )
+
+        chapter_row = repo.get_next_pending_chapter()
+        repo.mark_chapter_processing(chapter_row["id"], book_id)
+        chapter_id = chapter_row["id"]
+
+        # Simulate a previous partial run: create chunk segments with one completed
+        repo.create_chunk_segments(chapter_id, ["First sentence.", "Second sentence.", "Third sentence."])
+        segments = repo.get_chunk_segments(chapter_id)
+        repo.mark_chunk_segment_completed(segments[0]["id"], "/fake/chunk_0.wav")
+
+        chapter_dict = dict(chapter_row)
+
+        with (
+            patch("app.core.worker.generate_single_chunk") as mock_gen_chunk,
+            patch("app.core.worker.get_sample_rate", return_value=24000),
+            patch("app.core.worker.stitch_chunk_files"),
+            patch("app.core.worker.get_voice_library") as mock_voice_lib,
+        ):
+            mock_voice_lib.return_value.get_voice_path.return_value = None
+            mock_voice_lib.return_value.get_default_voice.return_value = None
+
+            await process_chapter(repo, chapter_dict)
+
+            # Should only generate 2 chunks (skipping the already-completed first one)
+            assert mock_gen_chunk.call_count == 2
 
 
 class TestBookWorkerLoop:

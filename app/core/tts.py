@@ -11,8 +11,9 @@ import logging
 
 from app.config import Config
 import torch
+import torchaudio as ta
 from chatterbox.tts_turbo import ChatterboxTurboTTS
-from app.core.audio import concatenate_with_gap, tensor_to_audio_bytes
+from app.core.audio import stitch_chunk_files
 from app.core.text import split_text_into_chunks
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,50 @@ def is_ready() -> bool:
     return _model is not None
 
 
+def generate_single_chunk(
+    text: str,
+    output_path: str,
+    reference_audio_path: str | None = None,
+) -> None:
+    """
+    Generate audio for a single text chunk and write WAV to disk.
+
+    This writes the result immediately and frees the tensor, keeping
+    memory usage proportional to a single chunk rather than the full chapter.
+
+    Args:
+        text: Text for this chunk
+        output_path: Where to write the WAV file
+        reference_audio_path: Optional reference audio for voice cloning
+
+    Raises:
+        RuntimeError: If model is not initialized
+    """
+
+    if _model is None:
+        raise RuntimeError("Model not initialized. Call initialize_model() first.")
+
+    with torch.no_grad():
+        if reference_audio_path is not None:
+            audio_tensor = _model.generate(text, audio_prompt_path=reference_audio_path)
+        else:
+            audio_tensor = _model.generate(text)
+
+    # Move to CPU and save immediately
+    if hasattr(audio_tensor, "cpu"):
+        audio_tensor = audio_tensor.cpu()
+
+    ta.save(output_path, audio_tensor, _model.sr, format="wav")
+    # Tensor is freed when it goes out of scope
+
+
+def get_sample_rate() -> int:
+    """Get the model's sample rate."""
+    if _model is None:
+        raise RuntimeError("Model not initialized. Call initialize_model() first.")
+    return _model.sr
+
+
 def generate_speech(
     text: str,
     reference_audio_path: str | None = None,
@@ -142,6 +187,8 @@ def generate_speech(
     - Audio concatenation with gaps
     - Format conversion (WAV to MP3)
 
+    Uses temp files per-chunk to avoid memory buildup on long inputs.
+
     Args:
         text: Input text to synthesize
         reference_audio_path: Optional path to reference audio for voice cloning
@@ -156,6 +203,9 @@ def generate_speech(
     Raises:
         RuntimeError: If model is not initialized
     """
+    import tempfile
+    from pathlib import Path
+
     if _model is None:
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
@@ -176,33 +226,44 @@ def generate_speech(
 
     print(f"Synthesizing {len(text)} characters in {len(chunks)} chunk(s) ...")
 
-    # Generate audio for each chunk
-    audio_tensors: list[torch.Tensor] = []
+    # Generate each chunk to a temp WAV file
+    chunk_paths: list[str] = []
+    tmp_dir = tempfile.mkdtemp(prefix="chatterbox_chunks_")
 
-    for index, chunk in enumerate(chunks):
-        print(f"  Chunk {index + 1}/{len(chunks)} ({len(chunk)} chars) ...")
+    try:
+        for index, chunk in enumerate(chunks):
+            print(f"  Chunk {index + 1}/{len(chunks)} ({len(chunk)} chars) ...")
 
-        # Only use reference audio for the first chunk (voice consistency)
-        ref_path = None
-        if reference_audio_path is not None and index == 0:
-            ref_path = reference_audio_path
+            chunk_path = str(Path(tmp_dir) / f"chunk_{index:04d}.wav")
 
-        # Generate audio
-        with torch.no_grad():
-            if ref_path is not None:
-                audio_tensor = _model.generate(chunk, audio_prompt_path=ref_path)
-            else:
-                # Use model's built-in voice (conds.pt from checkpoint)
-                audio_tensor = _model.generate(chunk)
+            # Only use reference audio for the first chunk (voice consistency)
+            ref_path = reference_audio_path if index == 0 else None
 
-        audio_tensors.append(audio_tensor)
+            generate_single_chunk(
+                text=chunk,
+                output_path=chunk_path,
+                reference_audio_path=ref_path,
+            )
+            chunk_paths.append(chunk_path)
 
-    # Concatenate chunks with gap
-    final_audio = concatenate_with_gap(
-        audio_tensors,
-        _model.sr,
-        gap_ms=resolved_gap_ms,
-    )
+        # Stitch all chunk files into final output
+        final_path = str(Path(tmp_dir) / f"final.{output_format}")
+        stitch_chunk_files(
+            chunk_paths=chunk_paths,
+            output_path=final_path,
+            sample_rate=_model.sr,
+            gap_ms=resolved_gap_ms,
+            output_format=output_format,
+        )
 
-    # Convert to output format
-    return tensor_to_audio_bytes(final_audio, _model.sr, output_format)
+        # Read final file into bytes
+        with open(final_path, "rb") as f:
+            audio_bytes = f.read()
+
+        content_type = "audio/wav" if output_format.lower() == "wav" else "audio/mpeg"
+        return audio_bytes, content_type
+
+    finally:
+        # Clean up temp directory
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)

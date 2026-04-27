@@ -6,11 +6,14 @@ import asyncio
 import contextlib
 import json
 import logging
+import shutil
 from pathlib import Path
 
 from app.config import Config
 from app.core.database import BookRepository
-from app.core.tts import generate_speech, is_ready
+from app.core.tts import generate_single_chunk, get_sample_rate, is_ready
+from app.core.text import split_text_into_chunks
+from app.core.audio import stitch_chunk_files
 from app.core.voices import get_voice_library
 
 logger = logging.getLogger(__name__)
@@ -30,8 +33,24 @@ def get_book_output_dir(book_id: str) -> Path:
     return output_dir
 
 
+def get_chunks_dir(book_id: str) -> Path:
+    """Get the directory for intermediate chunk WAV files."""
+    chunks_dir = Path("outputs") / "books" / book_id / "chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    return chunks_dir
+
+
 async def process_chapter(repo: BookRepository, chapter: dict) -> None:
-    """Process a single chapter: generate speech and save to disk."""
+    """
+    Process a single chapter with chunk-level persistence and crash resume.
+
+    Flow:
+    1. Split text into chunks
+    2. Check DB for existing chunk_segments (crash resume)
+    3. Generate only pending chunks → write each to disk → mark in DB
+    4. Stitch all chunk WAVs into final chapter audio
+    5. Optionally clean up chunk files
+    """
     chapter_id = chapter["id"]
     book_id = chapter["book_id"]
     chapter_num = chapter["chapter_number"]
@@ -64,37 +83,112 @@ async def process_chapter(repo: BookRepository, chapter: dict) -> None:
     if reference_audio_path is None and voice_alias:
         raise PermanentChapterError(f"Voice '{voice_alias}' not found in library.")
 
-    # Run generation in a thread to not block the asyncio loop
+    # ── 1. Split text into chunks ────────────────────────────────────
+    chunks = split_text_into_chunks(
+        text,
+        max_sentences_per_chunk=max_sentences,
+        max_chunk_chars=max_chars,
+    )
+
+    # ── 2. Check for existing chunk_segments (crash resume) ──────────
+    existing_segments = repo.get_chunk_segments(chapter_id)
+
+    if not existing_segments:
+        # First run: create chunk_segments in DB
+        repo.create_chunk_segments(chapter_id, chunks)
+        logger.info(
+            f"Created {len(chunks)} chunk segments for chapter {chapter_num} "
+            f"(book {book_id})"
+        )
+    else:
+        completed_count = sum(1 for s in existing_segments if s["status"] == "completed")
+        logger.info(
+            f"Resuming chapter {chapter_num} (book {book_id}): "
+            f"{completed_count}/{len(existing_segments)} chunks already completed"
+        )
+
+    # ── 3. Generate pending chunks → disk → DB ───────────────────────
+    chunks_dir = get_chunks_dir(book_id)
+    pending_segments = repo.get_pending_chunk_segments(chapter_id)
+    total_segments = repo.get_chunk_segments(chapter_id)
+    total_count = len(total_segments)
+
+    logger.info(
+        f"Synthesizing chapter {chapter_num}: "
+        f"{len(pending_segments)} pending of {total_count} total chunks"
+    )
+
     loop = asyncio.get_event_loop()
 
-    # generate_speech handles the TTS and format conversion
-    audio_bytes, _ = await loop.run_in_executor(
+    for seg in pending_segments:
+        chunk_index = seg["chunk_index"]
+        chunk_text = seg["text"]
+        chunk_filename = f"chapter_{chapter_num:03d}_chunk_{chunk_index:04d}.wav"
+        chunk_path = str(chunks_dir / chunk_filename)
+
+        logger.info(
+            f"  Chunk {chunk_index + 1}/{total_count} "
+            f"({len(chunk_text)} chars) ..."
+        )
+
+        # Only use reference audio for the very first chunk (index 0)
+        ref_path = reference_audio_path if chunk_index == 0 else None
+
+        # Run generation in executor to not block asyncio
+        await loop.run_in_executor(
+            None,
+            lambda cp=chunk_path, ct=chunk_text, rp=ref_path: generate_single_chunk(
+                text=ct,
+                output_path=cp,
+                reference_audio_path=rp,
+            ),
+        )
+
+        # Mark chunk as completed in DB immediately
+        repo.mark_chunk_segment_completed(seg["id"], chunk_path)
+
+    # ── 4. Stitch all chunks into final chapter audio ────────────────
+    all_segments = repo.get_chunk_segments(chapter_id)
+    chunk_paths = [seg["audio_path"] for seg in all_segments if seg["audio_path"]]
+
+    if not chunk_paths:
+        raise RuntimeError(f"No chunk audio files found for chapter {chapter_id}")
+
+    output_dir = get_book_output_dir(book_id)
+    filename = f"chapter_{chapter_num:03d}.{output_format}"
+    file_path = str(output_dir / filename)
+    sample_rate = get_sample_rate()
+
+    logger.info(f"Stitching {len(chunk_paths)} chunks → {filename}")
+
+    await loop.run_in_executor(
         None,
-        lambda: generate_speech(
-            text=text,
-            reference_audio_path=reference_audio_path,
-            max_sentences_per_chunk=max_sentences,
-            max_chunk_chars=max_chars,
-            chunk_gap_ms=gap_ms,
+        lambda: stitch_chunk_files(
+            chunk_paths=chunk_paths,
+            output_path=file_path,
+            sample_rate=sample_rate,
+            gap_ms=gap_ms,
             output_format=output_format,
         ),
     )
 
-    # Save to disk
-    output_dir = get_book_output_dir(book_id)
-    filename = f"chapter_{chapter_num:03d}.{output_format}"
-    file_path = output_dir / filename
+    # ── 5. Cleanup chunk files and DB records ────────────────────────
+    if Config.CLEANUP_CHUNK_FILES:
+        for path_str in chunk_paths:
+            path = Path(path_str)
+            path.unlink(missing_ok=True)
 
-    # Ensure it's streamed/saved efficiently
-    with open(file_path, "wb") as f:
-        f.write(audio_bytes)
+        # Remove chunks dir if empty
+        try:
+            chunks_dir.rmdir()
+        except OSError:
+            pass  # Not empty (other chapters' chunks may exist)
 
-    # Estimate duration roughly based on bytes (for MP3/WAV this is just a proxy,
-    # a real duration check would require pydub or similar, but we keep it simple here)
-    # Just storing 0.0 or a dummy value since real duration calculation requires parsing the audio frame
+        repo.delete_chunk_segments(chapter_id)
+
+    # ── 6. Mark chapter as completed ─────────────────────────────────
     duration_secs = 0.0
-
-    repo.mark_chapter_completed(chapter_id, str(file_path), duration_secs)
+    repo.mark_chapter_completed(chapter_id, file_path, duration_secs)
 
 
 async def book_worker_loop() -> None:

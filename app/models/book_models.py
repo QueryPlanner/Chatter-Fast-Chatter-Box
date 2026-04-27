@@ -40,6 +40,8 @@ class ChapterStatus(BaseModel):
     duration_secs: Optional[float] = None
     error: Optional[str] = None
     retry_count: int = 0
+    completed_chunks: int = 0
+    total_chunks: int = 0
 
 
 class BookProgress(BaseModel):

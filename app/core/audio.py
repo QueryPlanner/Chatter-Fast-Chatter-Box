@@ -129,3 +129,90 @@ def tensor_to_audio_bytes(
     # Convert to MP3
     mp3_bytes = wav_bytes_to_mp3_bytes(wav_bytes)
     return mp3_bytes, "audio/mpeg"
+
+
+def stitch_chunk_files(
+    chunk_paths: list[str],
+    output_path: str,
+    sample_rate: int,
+    gap_ms: int = 120,
+    output_format: str = "mp3",
+    batch_size: int = 10,
+) -> None:
+    """
+    Read chunk WAV files from disk, concatenate with silence gaps,
+    and write the final output file.
+
+    Processes chunks in batches to keep memory usage bounded. Each batch
+    is concatenated and written to a temporary WAV file, then all batch
+    files are stitched together at the end.
+
+    Args:
+        chunk_paths: Ordered list of WAV file paths to concatenate
+        output_path: Where to write the final output file
+        sample_rate: Audio sample rate
+        gap_ms: Silence gap in milliseconds between chunks
+        output_format: "mp3" or "wav"
+        batch_size: Number of chunks to process per batch (default 10)
+
+    Raises:
+        ValueError: If no chunk paths are provided
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path
+    import torchaudio as ta
+
+    if not chunk_paths:
+        raise ValueError("No chunk files to stitch")
+
+    gap_samples = max(0, int(sample_rate * (gap_ms / 1000.0)))
+    tmp_dir = tempfile.mkdtemp(prefix="stitch_batches_")
+    batch_paths: list[str] = []
+
+    try:
+        for batch_start in range(0, len(chunk_paths), batch_size):
+            batch_end = min(batch_start + batch_size, len(chunk_paths))
+            batch_chunk_paths = chunk_paths[batch_start:batch_end]
+
+            pieces: list[torch.Tensor] = []
+            for i, path in enumerate(batch_chunk_paths):
+                chunk_audio, sr = ta.load(path)
+                if sr != sample_rate:
+                    chunk_audio = ta.functional.resample(chunk_audio, sr, sample_rate)
+                pieces.append(chunk_audio)
+
+                is_last_in_batch = i == len(batch_chunk_paths) - 1
+                is_last_overall = batch_end == len(chunk_paths) and is_last_in_batch
+
+                if not is_last_overall and gap_samples > 0:
+                    silence = torch.zeros(1, gap_samples, dtype=chunk_audio.dtype)
+                    pieces.append(silence)
+
+            batch_audio = torch.cat(pieces, dim=1) if len(pieces) > 1 else pieces[0]
+
+            batch_path = str(Path(tmp_dir) / f"batch_{len(batch_paths):04d}.wav")
+            ta.save(batch_path, batch_audio, sample_rate, format="wav")
+            batch_paths.append(batch_path)
+            del pieces, batch_audio
+
+        if len(batch_paths) == 1:
+            final_audio, _ = ta.load(batch_paths[0])
+        else:
+            batch_pieces: list[torch.Tensor] = []
+            for path in batch_paths:
+                audio, _ = ta.load(path)
+                batch_pieces.append(audio)
+            final_audio = torch.cat(batch_pieces, dim=1)
+
+        if output_format.lower() == "wav":
+            ta.save(output_path, final_audio, sample_rate, format="wav")
+        else:
+            wav_buffer = io.BytesIO()
+            ta.save(wav_buffer, final_audio, sample_rate, format="wav")
+            wav_buffer.seek(0)
+            mp3_bytes = wav_bytes_to_mp3_bytes(wav_buffer.read())
+            with open(output_path, "wb") as f:
+                f.write(mp3_bytes)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

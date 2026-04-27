@@ -38,13 +38,14 @@ class TestDatabaseFunctions:
         conn = get_connection()
 
         cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('books', 'chapters')"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('books', 'chapters', 'chunk_segments')"
         )
         tables = {row["name"] for row in cursor.fetchall()}
         conn.close()
 
         assert "books" in tables
         assert "chapters" in tables
+        assert "chunk_segments" in tables
 
     def test_init_db_creates_indexes(self, temp_db: Path):
         """Test that init_db creates required indexes."""
@@ -59,6 +60,7 @@ class TestDatabaseFunctions:
 
         assert "idx_chapters_book_id" in indexes
         assert "idx_chapters_status" in indexes
+        assert "idx_chunk_segments_chapter_id" in indexes
 
 
 class TestBookRepository:
@@ -422,3 +424,152 @@ class TestBookRepository:
         book = repo.get_book(book_id)
         assert book["title"] == "Test Book"
         conn.close()
+
+
+class TestChunkSegments:
+    """Tests for chunk segment CRUD operations."""
+
+    def _create_book_with_chapter(self, repo: BookRepository) -> tuple[str, int]:
+        """Helper: create a book with one chapter and return (book_id, chapter_id)."""
+        book_id = repo.create_book(
+            title="Test Book",
+            voice=None,
+            output_format="mp3",
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Test text."}],
+            metadata={},
+        )
+        chapters = repo.get_chapters(book_id)
+        return book_id, chapters[0]["id"]
+
+    def test_create_chunk_segments(self, book_repo: BookRepository):
+        """Test bulk-inserting chunk segments."""
+        _, chapter_id = self._create_book_with_chapter(book_repo)
+        chunks = ["Chunk one.", "Chunk two.", "Chunk three."]
+
+        book_repo.create_chunk_segments(chapter_id, chunks)
+
+        segments = book_repo.get_chunk_segments(chapter_id)
+        assert len(segments) == 3
+        assert segments[0]["chunk_index"] == 0
+        assert segments[0]["text"] == "Chunk one."
+        assert segments[0]["status"] == "pending"
+        assert segments[0]["total_chunks"] == 3
+        assert segments[2]["chunk_index"] == 2
+
+    def test_create_chunk_segments_idempotent(self, book_repo: BookRepository):
+        """Test that duplicate inserts are ignored (INSERT OR IGNORE)."""
+        _, chapter_id = self._create_book_with_chapter(book_repo)
+        chunks = ["Chunk one.", "Chunk two."]
+
+        book_repo.create_chunk_segments(chapter_id, chunks)
+        book_repo.create_chunk_segments(chapter_id, chunks)  # duplicate
+
+        segments = book_repo.get_chunk_segments(chapter_id)
+        assert len(segments) == 2
+
+    def test_get_pending_chunk_segments(self, book_repo: BookRepository):
+        """Test filtering to only pending chunks."""
+        _, chapter_id = self._create_book_with_chapter(book_repo)
+        chunks = ["Chunk one.", "Chunk two.", "Chunk three."]
+        book_repo.create_chunk_segments(chapter_id, chunks)
+
+        # Mark first chunk as completed
+        segments = book_repo.get_chunk_segments(chapter_id)
+        book_repo.mark_chunk_segment_completed(segments[0]["id"], "/path/chunk0.wav")
+
+        pending = book_repo.get_pending_chunk_segments(chapter_id)
+        assert len(pending) == 2
+        assert pending[0]["chunk_index"] == 1
+
+    def test_mark_chunk_segment_completed(self, book_repo: BookRepository):
+        """Test marking a chunk as completed."""
+        _, chapter_id = self._create_book_with_chapter(book_repo)
+        book_repo.create_chunk_segments(chapter_id, ["Chunk one."])
+
+        segments = book_repo.get_chunk_segments(chapter_id)
+        book_repo.mark_chunk_segment_completed(segments[0]["id"], "/path/chunk0.wav")
+
+        updated = book_repo.get_chunk_segments(chapter_id)
+        assert updated[0]["status"] == "completed"
+        assert updated[0]["audio_path"] == "/path/chunk0.wav"
+        assert updated[0]["completed_at"] is not None
+
+    def test_delete_chunk_segments(self, book_repo: BookRepository):
+        """Test deleting all chunk segments for a chapter."""
+        _, chapter_id = self._create_book_with_chapter(book_repo)
+        book_repo.create_chunk_segments(chapter_id, ["A", "B"])
+
+        book_repo.delete_chunk_segments(chapter_id)
+
+        segments = book_repo.get_chunk_segments(chapter_id)
+        assert len(segments) == 0
+
+    def test_get_chunk_progress(self, book_repo: BookRepository):
+        """Test chunk progress reporting."""
+        _, chapter_id = self._create_book_with_chapter(book_repo)
+        book_repo.create_chunk_segments(chapter_id, ["A", "B", "C"])
+
+        completed, total = book_repo.get_chunk_progress(chapter_id)
+        assert completed == 0
+        assert total == 3
+
+        segments = book_repo.get_chunk_segments(chapter_id)
+        book_repo.mark_chunk_segment_completed(segments[0]["id"], "/a.wav")
+        book_repo.mark_chunk_segment_completed(segments[1]["id"], "/b.wav")
+
+        completed, total = book_repo.get_chunk_progress(chapter_id)
+        assert completed == 2
+        assert total == 3
+
+    def test_get_chunk_progress_no_segments(self, book_repo: BookRepository):
+        """Test chunk progress when no segments exist."""
+        _, chapter_id = self._create_book_with_chapter(book_repo)
+
+        completed, total = book_repo.get_chunk_progress(chapter_id)
+        assert completed == 0
+        assert total == 0
+
+    def test_get_chunk_progress_for_book(self, book_repo: BookRepository):
+        """Test bulk chunk progress for all chapters in a book."""
+        book_id = book_repo.create_book(
+            title="Test Book",
+            voice=None,
+            output_format="mp3",
+            chapters=[
+                {"chapter_number": 1, "title": "Ch1", "text": "Text one."},
+                {"chapter_number": 2, "title": "Ch2", "text": "Text two."},
+            ],
+            metadata={},
+        )
+        chapters = book_repo.get_chapters(book_id)
+        ch1_id = chapters[0]["id"]
+        ch2_id = chapters[1]["id"]
+
+        book_repo.create_chunk_segments(ch1_id, ["A", "B"])
+        book_repo.create_chunk_segments(ch2_id, ["C", "D", "E"])
+
+        segments1 = book_repo.get_chunk_segments(ch1_id)
+        book_repo.mark_chunk_segment_completed(segments1[0]["id"], "/a.wav")
+
+        progress = book_repo.get_chunk_progress_for_book(book_id)
+
+        assert ch1_id in progress
+        assert ch2_id in progress
+        assert progress[ch1_id] == (1, 2)
+        assert progress[ch2_id] == (0, 3)
+
+    def test_get_chunk_progress_for_book_no_segments(self, book_repo: BookRepository):
+        """Test bulk chunk progress when no segments exist."""
+        book_id = book_repo.create_book(
+            title="Test Book",
+            voice=None,
+            output_format="mp3",
+            chapters=[{"chapter_number": 1, "title": "Ch1", "text": "Text."}],
+            metadata={},
+        )
+        chapters = book_repo.get_chapters(book_id)
+        ch1_id = chapters[0]["id"]
+
+        progress = book_repo.get_chunk_progress_for_book(book_id)
+
+        assert progress[ch1_id] == (0, 0)

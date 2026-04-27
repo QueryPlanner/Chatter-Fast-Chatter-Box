@@ -75,9 +75,24 @@ def init_db() -> None:
                 FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS chunk_segments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chapter_id INTEGER NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                total_chunks INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                audio_path TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(chapter_id) REFERENCES chapters(id) ON DELETE CASCADE,
+                UNIQUE(chapter_id, chunk_index)
+            );
+
             -- Index for quick lookups
             CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id);
             CREATE INDEX IF NOT EXISTS idx_chapters_status ON chapters(status);
+            CREATE INDEX IF NOT EXISTS idx_chunk_segments_chapter_id ON chunk_segments(chapter_id);
         """)
         conn.commit()
 
@@ -324,3 +339,102 @@ class BookRepository:
             # Also ensure any 'processing' books are fine.
             conn.commit()
             return cursor.rowcount
+
+    # ── Chunk-segment methods ─────────────────────────────────────────
+
+    def create_chunk_segments(self, chapter_id: int, chunks: list[str]) -> None:
+        """Bulk-insert chunk segment rows for a chapter."""
+        now = utc_now_iso()
+        total = len(chunks)
+        rows = [
+            (chapter_id, idx, total, text, "pending", now)
+            for idx, text in enumerate(chunks)
+        ]
+        with self._get_conn() as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO chunk_segments
+                    (chapter_id, chunk_index, total_chunks, text, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.commit()
+
+    def get_chunk_segments(self, chapter_id: int) -> list[sqlite3.Row]:
+        """Get all chunk segments for a chapter, ordered by index."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM chunk_segments WHERE chapter_id = ? ORDER BY chunk_index ASC",
+                (chapter_id,),
+            )
+            return cursor.fetchall()
+
+    def get_pending_chunk_segments(self, chapter_id: int) -> list[sqlite3.Row]:
+        """Get only pending (not yet completed) chunk segments for a chapter."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM chunk_segments WHERE chapter_id = ? AND status = 'pending' ORDER BY chunk_index ASC",
+                (chapter_id,),
+            )
+            return cursor.fetchall()
+
+    def mark_chunk_segment_completed(self, chunk_id: int, audio_path: str) -> None:
+        """Mark a single chunk segment as completed with its audio path."""
+        now = utc_now_iso()
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE chunk_segments SET status = 'completed', audio_path = ?, completed_at = ? WHERE id = ?",
+                (audio_path, now, chunk_id),
+            )
+            conn.commit()
+
+    def delete_chunk_segments(self, chapter_id: int) -> None:
+        """Delete all chunk segments for a chapter (cleanup after stitching)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM chunk_segments WHERE chapter_id = ?", (chapter_id,)
+            )
+            conn.commit()
+
+    def get_chunk_progress(self, chapter_id: int) -> tuple[int, int]:
+        """Return (completed_chunks, total_chunks) for a chapter."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) as total, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed "
+                "FROM chunk_segments WHERE chapter_id = ?",
+                (chapter_id,),
+            )
+            row = cursor.fetchone()
+            if row and row["total"] > 0:
+                return int(row["completed"]), int(row["total"])
+            return 0, 0
+
+    def get_chunk_progress_for_book(self, book_id: str) -> dict[int, tuple[int, int]]:
+        """
+        Fetch chunk progress for all chapters in a book in a single query.
+
+        Returns:
+            Dict mapping chapter_id -> (completed_chunks, total_chunks)
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                SELECT
+                    c.id as chapter_id,
+                    COUNT(cs.id) as total,
+                    SUM(CASE WHEN cs.status = 'completed' THEN 1 ELSE 0 END) as completed
+                FROM chapters c
+                LEFT JOIN chunk_segments cs ON c.id = cs.chapter_id
+                WHERE c.book_id = ?
+                GROUP BY c.id
+                """,
+                (book_id,),
+            )
+            result: dict[int, tuple[int, int]] = {}
+            for row in cursor.fetchall():
+                chapter_id = row["chapter_id"]
+                total = row["total"] or 0
+                completed = row["completed"] or 0
+                result[chapter_id] = (int(completed), int(total))
+            return result

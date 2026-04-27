@@ -79,6 +79,9 @@ class Config:
     WORKER_POLL_INTERVAL: int = int(os.getenv("WORKER_POLL_INTERVAL", "2"))
     MAX_CHAPTER_RETRIES: int = int(os.getenv("MAX_CHAPTER_RETRIES", "3"))
 
+    # Chunk-level pipeline: delete intermediate chunk WAV files after stitching
+    CLEANUP_CHUNK_FILES: bool = os.getenv("CLEANUP_CHUNK_FILES", "true").lower() == "true"
+
     @classmethod
     def validate(cls) -> None:
         """Validate configuration values."""

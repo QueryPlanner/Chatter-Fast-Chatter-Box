@@ -10,7 +10,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from app.core.audio import concatenate_with_gap, tensor_to_audio_bytes, wav_bytes_to_mp3_bytes
+from app.core.audio import (
+    concatenate_with_gap,
+    stitch_chunk_files,
+    tensor_to_audio_bytes,
+    wav_bytes_to_mp3_bytes,
+)
 
 
 class TestConcatenateWithGap:
@@ -234,3 +239,145 @@ class TestPydubImportError:
                 del sys.modules["pydub"]
 
             importlib.reload(audio_module)
+
+
+class TestStitchChunkFiles:
+    """Tests for stitch_chunk_files function."""
+
+    def _create_chunk_wav(self, path: str, samples: int = 24000, sample_rate: int = 24000) -> None:
+        """Helper to create a valid WAV chunk file on disk."""
+        import torchaudio as ta
+
+        audio = torch.randn(1, samples)
+        ta.save(path, audio, sample_rate, format="wav")
+
+    def test_empty_list_raises(self, tmp_path):
+        """Test that empty chunk list raises ValueError."""
+        with pytest.raises(ValueError, match="No chunk files to stitch"):
+            stitch_chunk_files(
+                chunk_paths=[],
+                output_path=str(tmp_path / "out.wav"),
+                sample_rate=24000,
+            )
+
+    def test_single_chunk_wav(self, tmp_path):
+        """Test stitching a single chunk to WAV."""
+        chunk_path = str(tmp_path / "chunk_0.wav")
+        output_path = str(tmp_path / "out.wav")
+        self._create_chunk_wav(chunk_path, samples=24000)
+
+        stitch_chunk_files(
+            chunk_paths=[chunk_path],
+            output_path=output_path,
+            sample_rate=24000,
+            gap_ms=0,
+            output_format="wav",
+        )
+
+        import torchaudio as ta
+        from pathlib import Path
+
+        assert Path(output_path).exists()
+        audio, sr = ta.load(output_path)
+        assert sr == 24000
+        assert audio.shape[0] == 1
+        assert audio.shape[1] == 24000
+
+    def test_multiple_chunks_with_gap(self, tmp_path):
+        """Test stitching multiple chunks with silence gaps."""
+        chunk_paths = []
+        for i in range(3):
+            path = str(tmp_path / f"chunk_{i}.wav")
+            self._create_chunk_wav(path, samples=1000)
+            chunk_paths.append(path)
+
+        output_path = str(tmp_path / "out.wav")
+
+        stitch_chunk_files(
+            chunk_paths=chunk_paths,
+            output_path=output_path,
+            sample_rate=24000,
+            gap_ms=100,
+            output_format="wav",
+        )
+
+        import torchaudio as ta
+
+        audio, sr = ta.load(output_path)
+        gap_samples = int(24000 * 0.1)
+        expected_length = 3 * 1000 + 2 * gap_samples  # 3 chunks + 2 gaps
+        assert audio.shape[1] == expected_length
+
+    def test_mp3_output(self, tmp_path):
+        """Test stitching with MP3 output format."""
+        chunk_path = str(tmp_path / "chunk_0.wav")
+        output_path = str(tmp_path / "out.mp3")
+        self._create_chunk_wav(chunk_path, samples=24000)
+
+        with patch("app.core.audio.wav_bytes_to_mp3_bytes") as mock_to_mp3:
+            mock_to_mp3.return_value = b"MP3_DATA"
+
+            stitch_chunk_files(
+                chunk_paths=[chunk_path],
+                output_path=output_path,
+                sample_rate=24000,
+                output_format="mp3",
+            )
+
+            mock_to_mp3.assert_called_once()
+            from pathlib import Path
+
+            assert Path(output_path).exists()
+            with open(output_path, "rb") as f:
+                assert f.read() == b"MP3_DATA"
+
+    def test_batch_processing(self, tmp_path):
+        """Test stitching with batch processing for memory efficiency."""
+        chunk_paths = []
+        for i in range(25):
+            path = str(tmp_path / f"chunk_{i}.wav")
+            self._create_chunk_wav(path, samples=1000)
+            chunk_paths.append(path)
+
+        output_path = str(tmp_path / "out.wav")
+
+        stitch_chunk_files(
+            chunk_paths=chunk_paths,
+            output_path=output_path,
+            sample_rate=24000,
+            gap_ms=0,
+            output_format="wav",
+            batch_size=10,
+        )
+
+        import torchaudio as ta
+
+        audio, sr = ta.load(output_path)
+        assert sr == 24000
+        assert audio.shape[1] == 25 * 1000
+
+    def test_batch_processing_with_gaps(self, tmp_path):
+        """Test batch stitching preserves correct gaps between chunks."""
+        chunk_paths = []
+        for i in range(5):
+            path = str(tmp_path / f"chunk_{i}.wav")
+            self._create_chunk_wav(path, samples=1000)
+            chunk_paths.append(path)
+
+        output_path = str(tmp_path / "out.wav")
+
+        stitch_chunk_files(
+            chunk_paths=chunk_paths,
+            output_path=output_path,
+            sample_rate=24000,
+            gap_ms=100,
+            output_format="wav",
+            batch_size=2,
+        )
+
+        import torchaudio as ta
+
+        audio, sr = ta.load(output_path)
+        gap_samples = int(24000 * 0.1)
+        expected_length = 5 * 1000 + 4 * gap_samples
+        assert audio.shape[1] == expected_length

@@ -11,7 +11,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.config import Config
 
@@ -45,6 +45,15 @@ def init_db() -> None:
     """Initialize the database schema if it doesn't exist."""
     with get_connection() as conn:
         conn.executescript("""
+            CREATE TABLE IF NOT EXISTS folders (
+                id TEXT PRIMARY KEY,
+                parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_parent_name ON folders(COALESCE(parent_id, ''), name);
+
             CREATE TABLE IF NOT EXISTS books (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -94,6 +103,13 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_chapters_status ON chapters(status);
             CREATE INDEX IF NOT EXISTS idx_chunk_segments_chapter_id ON chunk_segments(chapter_id);
         """)
+        
+        # Migration for existing books table
+        cursor = conn.execute("PRAGMA table_info(books)")
+        columns = [row["name"] for row in cursor.fetchall()]
+        if "folder_id" not in columns:
+            conn.execute("ALTER TABLE books ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
+            
         conn.commit()
 
 
@@ -116,6 +132,7 @@ class BookRepository:
         output_format: str,
         chapters: list[dict[str, Any]],
         metadata: dict[str, Any],
+        folder_id: str | None = None,
     ) -> str:
         """
         Create a new book and its chapters.
@@ -126,6 +143,7 @@ class BookRepository:
             output_format: "mp3" or "wav"
             chapters: List of chapter dicts with 'chapter_number', 'title', 'text'
             metadata: Extra config (e.g. max_chunk_chars)
+            folder_id: Optional folder ID
 
         Returns:
             The new book ID
@@ -139,8 +157,8 @@ class BookRepository:
                 """
                 INSERT INTO books (
                     id, title, voice, output_format, status, total_chapters,
-                    created_at, updated_at, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, metadata_json, folder_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     book_id,
@@ -152,6 +170,7 @@ class BookRepository:
                     now,
                     now,
                     json.dumps(metadata),
+                    folder_id,
                 ),
             )
 
@@ -178,12 +197,21 @@ class BookRepository:
             row: sqlite3.Row | None = cursor.fetchone()
             return row
 
-    def get_books(self, limit: int = 100, offset: int = 0) -> list[sqlite3.Row]:
+    def get_books(self, limit: int = 100, offset: int = 0, folder_id: str | None | Literal['root'] = None) -> list[sqlite3.Row]:
         """Get a list of books ordered by creation time."""
         with self._get_conn() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM books ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)
-            )
+            if folder_id == 'root':
+                cursor = conn.execute(
+                    "SELECT * FROM books WHERE folder_id IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)
+                )
+            elif folder_id is not None:
+                cursor = conn.execute(
+                    "SELECT * FROM books WHERE folder_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?", (folder_id, limit, offset)
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM books ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)
+                )
             return cursor.fetchall()
 
     def get_chapters(self, book_id: str) -> list[sqlite3.Row]:
@@ -339,6 +367,46 @@ class BookRepository:
             # Also ensure any 'processing' books are fine.
             conn.commit()
             return cursor.rowcount
+
+    # ── Folder methods ───────────────────────────────────────────────
+
+    def create_folder(self, name: str, parent_id: str | None = None) -> str:
+        """Create a new folder."""
+        folder_id = str(uuid.uuid4())
+        now = utc_now_iso()
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO folders (id, parent_id, name, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (folder_id, parent_id, name, now, now),
+            )
+            conn.commit()
+        return folder_id
+
+    def get_folder(self, folder_id: str) -> sqlite3.Row | None:
+        """Get a folder by ID."""
+        with self._get_conn() as conn:
+            cursor = conn.execute("SELECT * FROM folders WHERE id = ?", (folder_id,))
+            return cursor.fetchone()
+
+    def get_folders(self, parent_id: str | None | Literal['root'] = None) -> list[sqlite3.Row]:
+        """Get folders, optionally filtering by parent_id."""
+        with self._get_conn() as conn:
+            if parent_id == 'root':
+                cursor = conn.execute("SELECT * FROM folders WHERE parent_id IS NULL ORDER BY name ASC")
+            elif parent_id is not None:
+                cursor = conn.execute("SELECT * FROM folders WHERE parent_id = ? ORDER BY name ASC", (parent_id,))
+            else:
+                cursor = conn.execute("SELECT * FROM folders ORDER BY name ASC")
+            return cursor.fetchall()
+
+    def delete_folder(self, folder_id: str) -> None:
+        """Delete a folder by ID."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+            conn.commit()
 
     # ── Chunk-segment methods ─────────────────────────────────────────
 

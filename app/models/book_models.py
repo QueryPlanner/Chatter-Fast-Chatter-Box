@@ -28,6 +28,7 @@ class CreateBookRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200, description="Book title")
     voice: Optional[str] = Field(None, description="Voice alias (defaults to server default if null)")
     output_format: str = Field("mp3", description="Output format: mp3 or wav")
+    folder_id: Optional[str] = Field(None, description="Optional folder ID")
     chapters: List[ChapterInput] = Field(..., min_length=1, description="List of chapters to process")
     config: BookConfig = Field(default_factory=BookConfig)  # type: ignore[arg-type]
 
@@ -61,6 +62,7 @@ class BookResponse(BaseModel):
     status: str
     voice: Optional[str] = None
     output_format: str
+    folder_id: Optional[str] = None
     progress: BookProgress
     chapters: List[ChapterStatus]
     created_at: str
@@ -75,6 +77,7 @@ class BookListItem(BaseModel):
     title: str
     status: str
     total_chapters: int
+    folder_id: Optional[str] = None
     created_at: str
     updated_at: str
 

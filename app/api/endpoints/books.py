@@ -7,6 +7,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from typing import Literal
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
@@ -43,6 +45,7 @@ async def create_book(request: CreateBookRequest) -> BookResponse:
         output_format=request.output_format,
         chapters=[ch.model_dump() for ch in request.chapters],
         metadata=metadata,
+        folder_id=request.folder_id,
     )
 
     return await get_book(book_id)
@@ -57,10 +60,11 @@ async def create_book(request: CreateBookRequest) -> BookResponse:
 async def list_books(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    folder_id: str | Literal["root"] | None = Query(default=None, description="Filter by folder ID or 'root'"),
 ) -> BooksListResponse:
     """List all books."""
     repo = BookRepository()
-    books_data = repo.get_books(limit=limit, offset=offset)
+    books_data = repo.get_books(limit=limit, offset=offset, folder_id=folder_id)
 
     books = [
         BookListItem(
@@ -68,6 +72,7 @@ async def list_books(
             title=row["title"],
             status=row["status"],
             total_chapters=row["total_chapters"],
+            folder_id=row["folder_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -132,6 +137,7 @@ async def get_book(book_id: str) -> BookResponse:
         status=book["status"],
         voice=book["voice"],
         output_format=book["output_format"],
+        folder_id=book["folder_id"],
         progress=progress,
         chapters=chapters,
         created_at=book["created_at"],

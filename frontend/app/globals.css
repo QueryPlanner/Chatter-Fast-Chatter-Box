@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+body {
+  @apply bg-surface-warm text-text-main font-sans;
+  background-image: linear-gradient(to right, #e5e5e5 1px, transparent 1px), linear-gradient(to bottom, #e5e5e5 1px, transparent 1px);
+  background-size: 48px 48px;
+}

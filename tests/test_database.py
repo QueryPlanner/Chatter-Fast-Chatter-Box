@@ -573,3 +573,59 @@ class TestChunkSegments:
         progress = book_repo.get_chunk_progress_for_book(book_id)
 
         assert progress[ch1_id] == (0, 0)
+
+class TestFolderRepository:
+    """Tests for folder CRUD operations in BookRepository."""
+
+    def test_create_and_get_folder(self, book_repo: BookRepository):
+        folder_id = book_repo.create_folder("My Folder")
+        assert folder_id is not None
+        folder = book_repo.get_folder(folder_id)
+        assert folder is not None
+        assert folder["name"] == "My Folder"
+        assert folder["parent_id"] is None
+
+    def test_create_folder_with_parent(self, book_repo: BookRepository):
+        parent_id = book_repo.create_folder("Parent")
+        child_id = book_repo.create_folder("Child", parent_id=parent_id)
+        
+        child = book_repo.get_folder(child_id)
+        assert child["parent_id"] == parent_id
+
+    def test_get_folders_filter(self, book_repo: BookRepository):
+        root_id1 = book_repo.create_folder("Root1")
+        root_id2 = book_repo.create_folder("Root2")
+        child_id = book_repo.create_folder("Child", parent_id=root_id1)
+        
+        all_folders = book_repo.get_folders()
+        assert len(all_folders) == 3
+
+        root_folders = book_repo.get_folders(parent_id="root")
+        assert len(root_folders) == 2
+        assert {f["id"] for f in root_folders} == {root_id1, root_id2}
+
+        child_folders = book_repo.get_folders(parent_id=root_id1)
+        assert len(child_folders) == 1
+        assert child_folders[0]["id"] == child_id
+
+    def test_delete_folder(self, book_repo: BookRepository):
+        folder_id = book_repo.create_folder("ToDelete")
+        book_repo.delete_folder(folder_id)
+        folder = book_repo.get_folder(folder_id)
+        assert folder is None
+
+    def test_get_books_folder_filter(self, book_repo: BookRepository):
+        f1 = book_repo.create_folder("Folder1")
+        b1 = book_repo.create_book("Book1", None, "mp3", [{"chapter_number": 1, "title": "Ch1", "text": "Text"}], {}, folder_id=None)
+        b2 = book_repo.create_book("Book2", None, "mp3", [{"chapter_number": 1, "title": "Ch1", "text": "Text"}], {}, folder_id=f1)
+
+        all_books = book_repo.get_books()
+        assert len(all_books) == 2
+
+        root_books = book_repo.get_books(folder_id="root")
+        assert len(root_books) == 1
+        assert root_books[0]["id"] == b1
+
+        f1_books = book_repo.get_books(folder_id=f1)
+        assert len(f1_books) == 1
+        assert f1_books[0]["id"] == b2

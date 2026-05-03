@@ -17,6 +17,7 @@ dependencies = [
     "setuptools>=81.0.0",
     # PyPI perth can leave PerthImplicitWatermarker as None; Git matches chatterbox#198
     "resemble-perth",
+    "trafilatura>=2.0.0",
 ]
 
 [project.scripts]

@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# unignore lib
+!/lib/
+
 # production
 /build
 

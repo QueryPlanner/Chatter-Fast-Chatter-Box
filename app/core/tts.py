@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 _model: ChatterboxTurboTTS | None = None
 _device: str | None = None
 _initialization_error: str | None = None
+_chunk_counter: int = 0
+GC_EVERY_N_CHUNKS: int = 5
 
 
 def resolve_device(explicit: str | None = None) -> str:
@@ -96,6 +98,11 @@ async def initialize_model(device: str | None = None) -> ChatterboxTurboTTS:
 
         _apply_cpu_threading_budget()
 
+        # Performance optimization: Disable CPU-heavy numpy watermarking
+        if hasattr(_model, "watermarker") and hasattr(_model.watermarker, "apply_watermark"):
+            _model.watermarker.apply_watermark = lambda wav, sample_rate: wav
+            logger.info("Disabled audio watermarking for performance optimization")
+
         _initialization_error = None
         print(f"Model loaded successfully on {_device}")
         return _model
@@ -147,6 +154,8 @@ def generate_single_chunk(
         RuntimeError: If model is not initialized
     """
 
+    global _chunk_counter
+
     if _model is None:
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
@@ -162,13 +171,15 @@ def generate_single_chunk(
 
     ta.save(output_path, audio_tensor, _model.sr, format="wav")
     
-    # Explicitly free memory
+    # Explicitly free memory periodically to save time
     del audio_tensor
-    if torch.backends.mps.is_available():
-        torch.mps.empty_cache()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    gc.collect()
+    _chunk_counter += 1
+    if _chunk_counter % GC_EVERY_N_CHUNKS == 0:
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
 
 def get_sample_rate() -> int:

@@ -144,8 +144,9 @@ def stitch_chunk_files(
     and write the final output file.
 
     Processes chunks in batches to keep memory usage bounded. Each batch
-    is concatenated and written to a temporary WAV file, then all batch
-    files are stitched together at the end.
+    is concatenated via torch tensors and saved as a temp WAV. Final
+    assembly uses pydub to sequentially append batch WAVs, keeping peak
+    memory proportional to a single batch — not the full chapter.
 
     Args:
         chunk_paths: Ordered list of WAV file paths to concatenate
@@ -158,6 +159,7 @@ def stitch_chunk_files(
     Raises:
         ValueError: If no chunk paths are provided
     """
+    import gc
     import shutil
     import tempfile
     from pathlib import Path
@@ -171,6 +173,7 @@ def stitch_chunk_files(
     batch_paths: list[str] = []
 
     try:
+        # ── Phase 1: Build batch WAVs from chunk tensors ─────────────
         for batch_start in range(0, len(chunk_paths), batch_size):
             batch_end = min(batch_start + batch_size, len(chunk_paths))
             batch_chunk_paths = chunk_paths[batch_start:batch_end]
@@ -194,25 +197,30 @@ def stitch_chunk_files(
             batch_path = str(Path(tmp_dir) / f"batch_{len(batch_paths):04d}.wav")
             ta.save(batch_path, batch_audio, sample_rate, format="wav")
             batch_paths.append(batch_path)
-            del pieces, batch_audio
 
-        if len(batch_paths) == 1:
-            final_audio, _ = ta.load(batch_paths[0])
-        else:
-            batch_pieces: list[torch.Tensor] = []
-            for path in batch_paths:
-                audio, _ = ta.load(path)
-                batch_pieces.append(audio)
-            final_audio = torch.cat(batch_pieces, dim=1)
+            # Free batch tensors and reclaim accelerator memory
+            del pieces, batch_audio
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
+        # ── Phase 2: Assemble batches via pydub (no full-chapter tensor) ─
+        if not PYDUB_AVAILABLE:
+            raise RuntimeError(
+                "pydub is required for audio stitching. "
+                "Install with: pip install pydub"
+            )
+
+        combined = AudioSegment.from_wav(batch_paths[0])
+        for path in batch_paths[1:]:
+            combined += AudioSegment.from_wav(path)
 
         if output_format.lower() == "wav":
-            ta.save(output_path, final_audio, sample_rate, format="wav")
+            combined.export(output_path, format="wav")
         else:
-            wav_buffer = io.BytesIO()
-            ta.save(wav_buffer, final_audio, sample_rate, format="wav")
-            wav_buffer.seek(0)
-            mp3_bytes = wav_bytes_to_mp3_bytes(wav_buffer.read())
-            with open(output_path, "wb") as f:
-                f.write(mp3_bytes)
+            combined.export(output_path, format="mp3", bitrate="128k")
+
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

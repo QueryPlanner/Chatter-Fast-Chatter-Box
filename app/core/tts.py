@@ -7,6 +7,7 @@ Based on generate_turbo.py - uses ChatterboxTurboTTS for faster generation.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 
 from app.config import Config
@@ -149,7 +150,7 @@ def generate_single_chunk(
     if _model is None:
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
-    with torch.no_grad():
+    with torch.inference_mode():
         if reference_audio_path is not None:
             audio_tensor = _model.generate(text, audio_prompt_path=reference_audio_path)
         else:
@@ -160,7 +161,14 @@ def generate_single_chunk(
         audio_tensor = audio_tensor.cpu()
 
     ta.save(output_path, audio_tensor, _model.sr, format="wav")
-    # Tensor is freed when it goes out of scope
+    
+    # Explicitly free memory
+    del audio_tensor
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
 
 
 def get_sample_rate() -> int:

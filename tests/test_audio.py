@@ -314,8 +314,9 @@ class TestStitchChunkFiles:
         output_path = str(tmp_path / "out.mp3")
         self._create_chunk_wav(chunk_path, samples=24000)
 
-        with patch("app.core.audio.wav_bytes_to_mp3_bytes") as mock_to_mp3:
-            mock_to_mp3.return_value = b"MP3_DATA"
+        with patch("app.core.audio.AudioSegment") as mock_segment_cls:
+            mock_combined = MagicMock()
+            mock_segment_cls.from_wav.return_value = mock_combined
 
             stitch_chunk_files(
                 chunk_paths=[chunk_path],
@@ -324,12 +325,9 @@ class TestStitchChunkFiles:
                 output_format="mp3",
             )
 
-            mock_to_mp3.assert_called_once()
-            from pathlib import Path
-
-            assert Path(output_path).exists()
-            with open(output_path, "rb") as f:
-                assert f.read() == b"MP3_DATA"
+            mock_combined.export.assert_called_once_with(
+                output_path, format="mp3", bitrate="128k"
+            )
 
     def test_batch_processing(self, tmp_path):
         """Test stitching with batch processing for memory efficiency."""

@@ -15,6 +15,13 @@ from app.core.voices import get_voice_library
 router = APIRouter(tags=["speech"])
 
 
+KYUTAI_VOICES = {
+    'cosette', 'marius', 'javert', 'alba', 'jean', 'anna', 'vera', 'fantine', 
+    'charles', 'paul', 'eponine', 'azelma', 'george', 'mary', 'jane', 'michael', 
+    'eve', 'bill_boerst', 'peter_yearsley', 'stuart_bell', 'caro_davy', 'giovanni', 
+    'lola', 'juergen', 'rafael', 'estelle'
+}
+
 @router.post(
     "/synthesize",
     responses={
@@ -27,7 +34,7 @@ router = APIRouter(tags=["speech"])
         },
     },
     summary="Synthesize speech",
-    description="Generate speech from text using Chatterbox TTS",
+    description="Generate speech from text using Chatterbox TTS or Kyutai Pocket TTS",
 )
 async def synthesize(
     text: str = Form(..., description="Text to synthesize", min_length=1, max_length=10000),
@@ -90,6 +97,12 @@ async def synthesize(
             tmp.write(content)
             reference_audio_path = tmp.name
 
+    elif Config.TTS_ENGINE.lower() == "kyutai" and voice in KYUTAI_VOICES:
+        reference_audio_path = voice
+
+    elif Config.TTS_ENGINE.lower() == "kyutai" and not voice:
+        reference_audio_path = "alba"
+
     elif voice:
         # User specified a voice from the library
         voice_lib = get_voice_library()
@@ -115,6 +128,10 @@ async def synthesize(
 
         if default_voice:
             reference_audio_path = voice_lib.get_voice_path(default_voice)
+        
+        if Config.TTS_ENGINE.lower() == "kyutai":
+            # Force fallback for Kyutai to prevent cloning error if default voice is a file
+            reference_audio_path = "alba"
 
     try:
         # Generate speech
@@ -154,3 +171,109 @@ async def synthesize(
             and reference_audio_path.startswith("/tmp")
         ):
             Path(reference_audio_path).unlink(missing_ok=True)
+
+
+@router.post(
+    "/synthesize/stream",
+    responses={
+        200: {
+            "description": "Streamed audio",
+            "content": {
+                "audio/mpeg": {"schema": {"type": "string", "format": "binary"}},
+                "audio/wav": {"schema": {"type": "string", "format": "binary"}},
+            },
+        },
+    },
+    summary="Stream synthesized speech",
+    description="Stream generated speech from text chunk by chunk",
+)
+async def synthesize_stream(
+    text: str = Form(..., description="Text to synthesize", min_length=1, max_length=10000),
+    voice: str = Form(None, description="Voice name or alias"),
+    output_format: str = Form("mp3", description="Output format: mp3 or wav"),
+    max_sentences_per_chunk: int = Form(
+        Config.MAX_SENTENCES_PER_CHUNK, description="Max sentences per chunk"
+    ),
+    max_chunk_chars: int = Form(Config.MAX_CHUNK_CHARS, description="Max characters per chunk"),
+    chunk_gap_ms: int = Form(Config.CHUNK_GAP_MS, description="Gap between chunks in ms"),
+    reference_audio: UploadFile = File(
+        None, description="Optional reference audio for voice cloning"
+    ),
+):
+    """
+    Stream generated speech from text chunk by chunk.
+    """
+    from fastapi.responses import StreamingResponse
+    from app.core.tts import generate_speech_stream
+    
+    if not is_ready():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "message": "Model is still initializing. Please try again in a moment.",
+                    "type": "model_not_ready",
+                }
+            },
+        )
+
+    output_format = output_format.lower()
+    if output_format not in ("mp3", "wav"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"message": "output_format must be 'mp3' or 'wav'", "type": "invalid_format"}}
+        )
+
+    reference_audio_path = None
+    if reference_audio is not None and reference_audio.filename:
+        content = await reference_audio.read()
+        suffix = Path(reference_audio.filename).suffix or ".wav"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            reference_audio_path = tmp.name
+    elif Config.TTS_ENGINE.lower() == "kyutai" and voice in KYUTAI_VOICES:
+        reference_audio_path = voice
+    elif Config.TTS_ENGINE.lower() == "kyutai" and not voice:
+        reference_audio_path = "alba"
+    elif voice:
+        voice_lib = get_voice_library()
+        voice_path = voice_lib.get_voice_path(voice)
+        if voice_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"message": f"Voice '{voice}' not found in voice library", "type": "voice_not_found"}}
+            )
+        reference_audio_path = voice_path
+    else:
+        voice_lib = get_voice_library()
+        default_voice = voice_lib.get_default_voice()
+        if default_voice:
+            reference_audio_path = voice_lib.get_voice_path(default_voice)
+        if Config.TTS_ENGINE.lower() == "kyutai":
+            reference_audio_path = "alba"
+
+    async def cleanup_generator():
+        try:
+            async for chunk in generate_speech_stream(
+                text=text,
+                reference_audio_path=reference_audio_path,
+                max_sentences_per_chunk=max_sentences_per_chunk,
+                max_chunk_chars=max_chunk_chars,
+                chunk_gap_ms=chunk_gap_ms,
+                output_format=output_format,
+            ):
+                yield chunk
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error streaming speech: {e}")
+        finally:
+            if reference_audio is not None and reference_audio_path and reference_audio_path.startswith("/tmp"):
+                Path(reference_audio_path).unlink(missing_ok=True)
+
+    content_type = "audio/wav" if output_format == "wav" else "audio/mpeg"
+
+    return StreamingResponse(
+        cleanup_generator(),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="speech.{output_format}"'}
+    )

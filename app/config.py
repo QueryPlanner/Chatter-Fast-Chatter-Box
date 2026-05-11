@@ -74,6 +74,9 @@ class Config:
     # Output format
     DEFAULT_OUTPUT_FORMAT: str = os.getenv("DEFAULT_OUTPUT_FORMAT", "mp3")
 
+    # Engine
+    TTS_ENGINE: str = os.getenv("TTS_ENGINE", "kyutai")
+
     # Database and Background worker
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/jobs.db")
     WORKER_POLL_INTERVAL: int = int(os.getenv("WORKER_POLL_INTERVAL", "2"))
@@ -110,4 +113,9 @@ class Config:
         if cls.DEFAULT_OUTPUT_FORMAT.lower() not in ("mp3", "wav"):
             raise ValueError(
                 f"DEFAULT_OUTPUT_FORMAT must be mp3 or wav, got {cls.DEFAULT_OUTPUT_FORMAT}"
+            )
+
+        if cls.TTS_ENGINE.lower() not in ("chatterbox", "kyutai"):
+            raise ValueError(
+                f"TTS_ENGINE must be chatterbox or kyutai, got {cls.TTS_ENGINE}"
             )

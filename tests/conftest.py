@@ -101,6 +101,9 @@ def mock_tts_model():
     import torch
 
     model = MagicMock()
+    model.sample_rate = 24000
+    model.get_state_for_audio_prompt = MagicMock(return_value="mock_state")
+    model.generate_audio = MagicMock(return_value=torch.randn(1, 24000))
     model.sr = 24000
     model.generate = MagicMock(return_value=torch.randn(1, 24000))
     return model
@@ -109,8 +112,16 @@ def mock_tts_model():
 @pytest.fixture
 def mock_chatterbox(mock_tts_model: MagicMock):
     """Mock the ChatterboxTurboTTS module."""
-    with patch("app.core.tts.ChatterboxTurboTTS") as mock_cls:
+    import chatterbox.tts_turbo
+    with patch("chatterbox.tts_turbo.ChatterboxTurboTTS") as mock_cls:
         mock_cls.from_pretrained = MagicMock(return_value=mock_tts_model)
+        yield mock_cls
+
+@pytest.fixture
+def mock_pocket_tts(mock_tts_model: MagicMock):
+    """Mock the Pocket TTS module."""
+    with patch("pocket_tts.TTSModel") as mock_cls:
+        mock_cls.load_model = MagicMock(return_value=mock_tts_model)
         yield mock_cls
 
 

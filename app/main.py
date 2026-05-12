@@ -2,7 +2,7 @@
 FastAPI application entry point for Fast-Chatterbox.
 
 Chatterbox TTS server with:
-- Text-to-speech synthesis using ChatterboxTurboTTS
+- Text-to-speech synthesis using ChatterboxTurboTTS and Kyutai Pocket TTS
 - Voice library management
 - MP3/WAV output formats
 """
@@ -100,7 +100,7 @@ def create_app() -> FastAPI:
         title="Fast-Chatterbox",
         description=(
             "FastAPI server for Chatterbox TTS with voice cloning support. "
-            "Generate speech from text using ChatterboxTurboTTS with support for "
+            "Generate speech from text using ChatterboxTurboTTS or Kyutai Pocket TTS with support for "
             "voice cloning, MP3/WAV output, and long text chunking."
         ),
         version="0.1.0",

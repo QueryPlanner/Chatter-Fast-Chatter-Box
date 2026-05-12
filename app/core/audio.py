@@ -188,7 +188,8 @@ def stitch_chunk_files(
                 is_last_in_batch = i == len(batch_chunk_paths) - 1
                 is_last_overall = batch_end == len(chunk_paths) and is_last_in_batch
 
-                if not is_last_overall and gap_samples > 0:
+                # Always add gap at the end of chunks (even the last one) to prevent unnatural cut-offs
+                if gap_samples > 0:
                     silence = torch.zeros(1, gap_samples, dtype=chunk_audio.dtype)
                     pieces.append(silence)
 

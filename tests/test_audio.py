@@ -305,7 +305,7 @@ class TestStitchChunkFiles:
 
         audio, sr = ta.load(output_path)
         gap_samples = int(24000 * 0.1)
-        expected_length = 3 * 1000 + 2 * gap_samples  # 3 chunks + 2 gaps
+        expected_length = 3 * 1000 + 3 * gap_samples  # 3 chunks + 3 gaps (trailing gap added)
         assert audio.shape[1] == expected_length
 
     def test_mp3_output(self, tmp_path):
@@ -377,5 +377,5 @@ class TestStitchChunkFiles:
 
         audio, sr = ta.load(output_path)
         gap_samples = int(24000 * 0.1)
-        expected_length = 5 * 1000 + 4 * gap_samples
+        expected_length = 5 * 1000 + 5 * gap_samples  # Trailing gaps
         assert audio.shape[1] == expected_length

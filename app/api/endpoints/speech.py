@@ -22,6 +22,49 @@ KYUTAI_VOICES = {
     'lola', 'juergen', 'rafael', 'estelle'
 }
 
+async def resolve_reference_audio(voice: str | None, reference_audio: UploadFile | None) -> str | None:
+    """Helper to resolve the reference audio path based on user input and configuration."""
+    if reference_audio is not None and reference_audio.filename:
+        content = await reference_audio.read()
+        suffix = Path(reference_audio.filename).suffix or ".wav"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            return tmp.name
+
+    if Config.TTS_ENGINE.lower() == "kyutai" and voice in KYUTAI_VOICES:
+        return voice
+
+    if Config.TTS_ENGINE.lower() == "kyutai" and not voice:
+        return "alba"
+
+    if voice:
+        voice_lib = get_voice_library()
+        voice_path = voice_lib.get_voice_path(voice)
+        if voice_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": {
+                        "message": f"Voice '{voice}' not found in voice library",
+                        "type": "voice_not_found",
+                    }
+                },
+            )
+        return voice_path
+
+    voice_lib = get_voice_library()
+    default_voice = voice_lib.get_default_voice()
+    
+    reference_audio_path = None
+    if default_voice:
+        reference_audio_path = voice_lib.get_voice_path(default_voice)
+    
+    if Config.TTS_ENGINE.lower() == "kyutai":
+        return "alba"
+
+    return reference_audio_path
+
+
 @router.post(
     "/synthesize",
     responses={
@@ -85,53 +128,7 @@ async def synthesize(
         )
 
     # Determine reference audio path
-    reference_audio_path = None
-
-    if reference_audio is not None and reference_audio.filename:
-        # User uploaded a reference audio file
-        # Save to temp file
-        content = await reference_audio.read()
-        suffix = Path(reference_audio.filename).suffix or ".wav"
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(content)
-            reference_audio_path = tmp.name
-
-    elif Config.TTS_ENGINE.lower() == "kyutai" and voice in KYUTAI_VOICES:
-        reference_audio_path = voice
-
-    elif Config.TTS_ENGINE.lower() == "kyutai" and not voice:
-        reference_audio_path = "alba"
-
-    elif voice:
-        # User specified a voice from the library
-        voice_lib = get_voice_library()
-        voice_path = voice_lib.get_voice_path(voice)
-
-        if voice_path is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": {
-                        "message": f"Voice '{voice}' not found in voice library",
-                        "type": "voice_not_found",
-                    }
-                },
-            )
-
-        reference_audio_path = voice_path
-
-    else:
-        # Use default voice
-        voice_lib = get_voice_library()
-        default_voice = voice_lib.get_default_voice()
-
-        if default_voice:
-            reference_audio_path = voice_lib.get_voice_path(default_voice)
-        
-        if Config.TTS_ENGINE.lower() == "kyutai":
-            # Force fallback for Kyutai to prevent cloning error if default voice is a file
-            reference_audio_path = "alba"
+    reference_audio_path = await resolve_reference_audio(voice, reference_audio)
 
     try:
         # Generate speech
@@ -224,33 +221,7 @@ async def synthesize_stream(
             detail={"error": {"message": "output_format must be 'mp3' or 'wav'", "type": "invalid_format"}}
         )
 
-    reference_audio_path = None
-    if reference_audio is not None and reference_audio.filename:
-        content = await reference_audio.read()
-        suffix = Path(reference_audio.filename).suffix or ".wav"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(content)
-            reference_audio_path = tmp.name
-    elif Config.TTS_ENGINE.lower() == "kyutai" and voice in KYUTAI_VOICES:
-        reference_audio_path = voice
-    elif Config.TTS_ENGINE.lower() == "kyutai" and not voice:
-        reference_audio_path = "alba"
-    elif voice:
-        voice_lib = get_voice_library()
-        voice_path = voice_lib.get_voice_path(voice)
-        if voice_path is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"message": f"Voice '{voice}' not found in voice library", "type": "voice_not_found"}}
-            )
-        reference_audio_path = voice_path
-    else:
-        voice_lib = get_voice_library()
-        default_voice = voice_lib.get_default_voice()
-        if default_voice:
-            reference_audio_path = voice_lib.get_voice_path(default_voice)
-        if Config.TTS_ENGINE.lower() == "kyutai":
-            reference_audio_path = "alba"
+    reference_audio_path = await resolve_reference_audio(voice, reference_audio)
 
     async def cleanup_generator():
         try:

@@ -10,6 +10,7 @@ import asyncio
 import gc
 import logging
 import tempfile
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ _chunk_counter: int = 0
 GC_EVERY_N_CHUNKS: int = 5
 
 _voice_state_cache: dict[str, object] = {}
+MAX_VOICE_CACHE_SIZE = 10
 
 
 def resolve_device(explicit: str | None = None) -> str:
@@ -152,6 +154,9 @@ def get_voice_state(prompt: str) -> object:
     if _model is None:
         raise RuntimeError("Model not initialized. Call initialize_model() first.")
     if prompt not in _voice_state_cache:
+        if len(_voice_state_cache) >= MAX_VOICE_CACHE_SIZE:
+            # Remove oldest entry to prevent memory leak
+            _voice_state_cache.pop(next(iter(_voice_state_cache)))
         _voice_state_cache[prompt] = _model.get_state_for_audio_prompt(prompt)
     return _voice_state_cache[prompt]
 
@@ -286,8 +291,8 @@ def generate_speech(
 
             chunk_path = str(Path(tmp_dir) / f"chunk_{index:04d}.wav")
 
-            # Only use reference audio for the first chunk (voice consistency)
-            ref_path = reference_audio_path if index == 0 else None
+            # Use the same reference audio for all chunks for voice consistency
+            ref_path = reference_audio_path
 
             generate_single_chunk(
                 text=chunk,
@@ -325,8 +330,7 @@ async def generate_speech_stream(
     max_chunk_chars: int | None = None,
     chunk_gap_ms: int | None = None,
     output_format: str = "mp3",
-):
-    from collections.abc import AsyncGenerator
+) -> AsyncGenerator[bytes, None]:
     import asyncio
     
     global _chunk_counter
@@ -375,9 +379,8 @@ async def generate_speech_stream(
             for index, chunk in enumerate(chunks):
                 print(f"  Streaming Chunk {index + 1}/{len(chunks)} ({len(chunk)} chars) ...")
 
-                # Only use reference audio for the first chunk (voice consistency)
-                ref_path = reference_audio_path if index == 0 else None
-                prompt = ref_path if ref_path else "alba"
+                # Use the same reference audio for all chunks in the stream for voice consistency
+                prompt = reference_audio_path if reference_audio_path else "alba"
 
                 # Run inference in a separate thread to avoid blocking the event loop
                 loop = asyncio.get_event_loop()
@@ -408,7 +411,7 @@ async def generate_speech_stream(
                     audio_tensor = torch.cat([audio_tensor, silence], dim=1)
 
                 # Write raw float32 PCM bytes to ffmpeg
-                pcm_bytes = audio_tensor.numpy().tobytes()
+                pcm_bytes = audio_tensor.to(torch.float32).numpy().tobytes()
                 process.stdin.write(pcm_bytes)
                 await process.stdin.drain()
 
@@ -438,8 +441,14 @@ async def generate_speech_stream(
                 break
             yield out_chunk
     finally:
-        await inference_task
+        inference_task.cancel()
         if process.returncode is None:
             import contextlib
             with contextlib.suppress(ProcessLookupError):
                 process.terminate()
+        
+        # Wait for the task to finish cleanup
+        try:
+            await inference_task
+        except asyncio.CancelledError:
+            pass
